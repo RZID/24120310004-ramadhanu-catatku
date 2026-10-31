@@ -11,6 +11,9 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
+/**
+ * @property TransactionType $type
+ */
 class Category extends Model
 {
     /** @use HasFactory<CategoryFactory> */

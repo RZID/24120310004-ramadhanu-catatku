@@ -12,6 +12,11 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+/**
+ * @property TransactionType $type
+ * @property int $amount
+ * @property Carbon $transacted_on
+ */
 class Transaction extends Model
 {
     /** @use HasFactory<TransactionFactory> */

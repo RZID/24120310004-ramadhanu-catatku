@@ -19,7 +19,7 @@ class AdminSeeder extends Seeder
         ]);
 
         // `role` is not mass assignable, so it is set on the model directly.
-        $admin->role = UserRole::Admin->value;
+        $admin->role = UserRole::Admin;
         $admin->save();
     }
 }

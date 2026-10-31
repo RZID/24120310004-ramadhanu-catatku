@@ -241,3 +241,46 @@ touched (`users=3`, `transactions=60` before and after).
   `docs/submission-checklist.md` §3.
 - The `v1.0.0` tag is intentionally **not** created yet: it should mark a commit that passed
   the live checklist, not a rehearsal.
+
+## 4b. Kalau server hanya bisa dijangkau lewat Cloudflare Tunnel
+
+Runner GitHub berjalan di internet publik, jadi ia hanya bisa `ssh` ke server yang port 22-nya
+terbuka. Kalau server berada di balik Cloudflare Tunnel (tidak punya IP publik), SSH harus
+diteruskan lewat `cloudflared` di sisi runner:
+
+1. Tambahkan aplikasi Access untuk SSH di dashboard Cloudflare (`cloudflared tunnel route ssh
+   ssh.<domain> --hostname <host>`), lalu buat **service token** Access.
+2. Di workflow, sebelum langkah `Set up SSH`, pasang `cloudflared` dan set `ProxyCommand`:
+
+   ```yaml
+   - name: Install cloudflared
+     run: |
+       curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+         -o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared
+
+   - name: Configure SSH proxy
+     env:
+       CF_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+       CF_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+     run: |
+       printf 'Host %s\n  ProxyCommand cloudflared access ssh --hostname %%h\n' "${{ secrets.SSH_HOST }}" \
+         >> ~/.ssh/config
+       printf 'export TUNNEL_SERVICE_TOKEN_ID=%s\nexport TUNNEL_SERVICE_TOKEN_SECRET=%s\n' \
+         "$CF_ID" "$CF_SECRET" > ~/.cloudflared-token
+       cat ~/.cloudflared-token >> ~/.bashrc
+   ```
+
+3. Secret tambahan: `CF_ACCESS_CLIENT_ID` dan `CF_ACCESS_CLIENT_SECRET`.
+
+Jika server punya IP publik dan port 22 terbuka, langkah 4b ini tidak perlu — cukup empat
+secret di `docs/deployment.md` §4.
+
+## 4c. Kegagalan workflow yang umum
+
+| Gejala | Penyebab | Perbaikan |
+| --- | --- | --- |
+| Gagal di `Check required secrets` | nama secret salah atau nilainya kosong | buat ulang dengan nama persis: `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY`, `APP_PATH` |
+| Gagal di `Check required secrets` dengan pesan format | private key ditempel sebagian (hanya satu baris) | tempel seluruh isi file, dari `-----BEGIN` sampai `-----END ...-----` |
+| Gagal di `Set up SSH` | runner tidak bisa `ssh-keyscan` ke host | cek firewall/port 22, atau pakai §4b |
+| Gagal di `Pull, rebuild and migrate` | `APP_PATH` salah, repo belum di-clone di server, atau user tidak bisa menjalankan `docker` | cek `cd "$APP_PATH"` manual di server dan `docker compose version` |
+| Workflow hijau tapi URL 404 | container jalan tapi tunnel belum diarahkan | cek ingress `cloudflared`, lihat §5 |

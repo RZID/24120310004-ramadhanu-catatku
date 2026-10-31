@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\RegisterController;
@@ -30,4 +31,11 @@ Route::middleware('auth')->group(function (): void {
     Route::resource('categories', CategoryController::class)->except('show');
 
     Route::post('/logout', [LogoutController::class, 'destroy'])->name('logout');
+
+    Route::middleware('admin')->prefix('admin')->name('admin.')->group(function (): void {
+        Route::get('/users', [UserController::class, 'index'])->name('users.index');
+        Route::post('/users/{user}/deactivate', [UserController::class, 'deactivate'])->name('users.deactivate');
+        Route::post('/users/{user}/activate', [UserController::class, 'activate'])->name('users.activate');
+        Route::delete('/users/{user}', [UserController::class, 'destroy'])->name('users.destroy');
+    });
 });

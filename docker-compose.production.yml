@@ -1,0 +1,39 @@
+# Production stack for the home server: the app image built from the `production`
+# target plus its own MySQL. Configuration comes from the .env file next to this file.
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: production
+    image: catatku-app:production
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      # Cloudflare Tunnel reaches the app on this port; keep it off the public
+      # internet with the host firewall and let the tunnel be the only entry point.
+      - "${APP_PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      # Values are interpolated from .env, not injected wholesale: the database has
+      # no business seeing APP_KEY.
+      MYSQL_DATABASE: ${DB_DATABASE}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "--host=127.0.0.1", "--user=root", "--password=$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  db-data:

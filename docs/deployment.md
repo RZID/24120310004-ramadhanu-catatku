@@ -1,8 +1,21 @@
 # Deployment
 
-Target: one Railway service built from the `production` stage of `docker/Dockerfile`,
-plus Railway's managed MySQL. Everything below was executed locally first; the steps
-that need account access are marked as such.
+Target: a home server running the `production` stage of `docker/Dockerfile` behind a
+Cloudflare Tunnel, deployed by a GitHub Actions workflow over SSH. No Railway, no
+managed database: the app and its MySQL run as two containers on the same host.
+
+```mermaid
+flowchart LR
+    dev[git push origin main] --> gha[GitHub Actions]
+    gha -- ssh --> srv[Home server]
+    srv --> repo[git fetch + reset --hard]
+    repo --> build[docker compose build]
+    build --> migrate[php artisan migrate --force]
+    migrate --> up[docker compose up -d]
+    user[Browser] --> cf[Cloudflare Tunnel]
+    cf --> app[catatku-app:production :8080]
+    app --> db[(MySQL 8.4 volume)]
+```
 
 ## 1. Production image, verified locally
 
@@ -43,89 +56,127 @@ Set-Cookie: catatku-session=...; httponly; samesite=lax
 With `SESSION_SECURE_COOKIE=true` (the production setting) the same cookie becomes
 `secure; httponly; samesite=lax`.
 
-Two pieces of code make the production output above possible:
+Two pieces of code make that output possible:
 
-- `bootstrap/app.php` -> `$middleware->trustProxies(at: '*')`, because Railway
-  terminates TLS on its load balancer and only the forwarded headers reveal the real
-  scheme and client IP.
-- `AppServiceProvider::boot()` -> `URL::forceScheme('https')` when the app is in
-  production, so generated URLs and redirects never fall back to `http`.
+- `bootstrap/app.php` -> `$middleware->trustProxies(at: '*')`, because the tunnel
+  terminates TLS and only the forwarded headers reveal the real scheme and client IP.
+- `AppServiceProvider::boot()` -> `URL::forceScheme('https')` in production, so
+  generated URLs and redirects never fall back to `http`.
 
-## 2. Environment variables on Railway
+## 2. Server prerequisites
 
-| Variable | Value |
+| Requirement | Why |
 | --- | --- |
-| `APP_NAME` | `Catatku` |
+| Docker Engine + Compose v2 | `docker-compose.production.yml` is a Compose v2 file |
+| Git | The workflow pulls `main` on the server |
+| A clone at a fixed path, e.g. `/srv/catatku` | That path is the `APP_PATH` secret |
+| Cloudflare Tunnel client | Terminates TLS and forwards to the app port |
+| Port 8080 free (or `APP_PORT` set) | The app container publishes it |
+
+## 3. First-time server setup
+
+```bash
+sudo mkdir -p /srv/catatku && sudo chown "$USER" /srv/catatku
+git clone git@github.com:<owner>/Catatku.git /srv/catatku
+cd /srv/catatku
+cp .env.example .env
+chmod 600 .env
+```
+
+Edit `.env` on the server. These values differ from development:
+
+| Variable | Production value |
+| --- | --- |
 | `APP_ENV` | `production` |
 | `APP_DEBUG` | `false` |
-| `APP_KEY` | `php artisan key:generate --show` once, then paste |
-| `APP_URL` | the generated `https://...up.railway.app` domain |
-| `APP_LOCALE` / `APP_FALLBACK_LOCALE` | `id` / `en` |
-| `APP_FAKER_LOCALE` | `id_ID` |
+| `APP_KEY` | `php artisan key:generate --show` run once, then pasted |
+| `APP_URL` | `https://catatku.<your-domain>` |
 | `LOG_CHANNEL` | `stderr` |
-| `DB_CONNECTION` | `mysql` |
-| `DB_HOST` / `DB_PORT` | `${{ MySQL.MYSQLHOST }}` / `${{ MySQL.MYSQLPORT }}` |
-| `DB_DATABASE` / `DB_USERNAME` / `DB_PASSWORD` | `${{ MySQL.MYSQLDATABASE }}` / `${{ MySQL.MYSQLUSER }}` / `${{ MySQL.MYSQLPASSWORD }}` |
-| `SESSION_DRIVER` | `database` |
 | `SESSION_SECURE_COOKIE` | `true` |
-| `CACHE_STORE` | `database` |
-| `QUEUE_CONNECTION` | `sync` |
+| `DB_HOST` | `db` |
+| `DB_PASSWORD` / `DB_ROOT_PASSWORD` | real secrets, not the example values |
+| `APP_PORT` | host port for the app container, default `8080` |
 
-`DB_ROOT_PASSWORD`, `DB_URL` and `MYSQL_ATTR_SSL_CA` are not needed: Railway's MySQL
-gives one database and one user.
+`.env` is untracked, so the deploy's `git reset --hard` never overwrites or deletes it.
 
-## 3. Service settings
+First boot:
 
-| Setting | Value | Why |
-| --- | --- | --- |
-| Build | Dockerfile | The repo ships a multi-stage `docker/Dockerfile` |
-| Dockerfile path | `docker/Dockerfile` | The file is not at the repository root |
-| Healthcheck path | `/up` | Laravel's built-in health route, registered in `bootstrap/app.php` |
-| Restart policy | `ON_FAILURE` | A crashed container should come back, a deployed one should stay up |
-| Pre-deploy command | `php artisan migrate --force` | Runs before the new container receives traffic |
+```bash
+docker compose -f docker-compose.production.yml build
+docker compose -f docker-compose.production.yml run --rm app php artisan migrate --force
+docker compose -f docker-compose.production.yml run --rm app php artisan db:seed --force
+docker compose -f docker-compose.production.yml up -d
+```
 
-No `railway.json` is committed: Railway marked config-as-code as deprecated in favour of
-Infrastructure as Code, so these settings live in the dashboard instead.
+`db:seed --force` runs exactly once: the seeders are not idempotent and would duplicate
+the demo rows on every deploy, which is why the workflow never calls them.
 
-The Vite assets are built inside the Docker image (`assets` stage), so no build command
-is needed on Railway and `npm` never runs on the host at deploy time.
+## 4. GitHub Actions secrets
 
-## 4. First deploy checklist
+The workflow (`.github/workflows/deploy.yml`) runs on every push to `main` and on
+`workflow_dispatch`.
 
-1. Push `main` to GitHub (the repository has no remote configured yet).
-2. Railway: **New Project -> Deploy from GitHub repo** -> pick `Catatku`.
-3. **New -> Database -> Add MySQL** in the same project.
-4. Fill the variables from the table above. `APP_URL` is the Railway domain, so deploy
-   once, read the domain, then set it and redeploy.
-5. Apply the settings from section 3, then **Deploy**.
-6. Seed the demo data once, from the Railway shell:
-   `php artisan db:seed --force`
-7. Verify on the live URL:
-   - `GET /` -> `302` to `/login` over `https`
-   - `GET /login` -> `200`, form contains `name="_token"`
-   - `POST /login` without a token -> `419`
-   - login `budi@catatku.test` / `password` -> dashboard with the user name
-   - `POST /logout` -> back to `/login`, and `/dashboard` redirects again
-   - response cookie shows `secure; httponly; samesite=lax`
+| Secret | Content |
+| --- | --- |
+| `SSH_HOST` | hostname or IP the runner connects to |
+| `SSH_USER` | user that owns the clone and can run `docker` |
+| `SSH_PRIVATE_KEY` | private key of a deploy keypair, newline-safe |
+| `APP_PATH` | absolute path of the clone, e.g. `/srv/catatku` |
 
-## 5. Problems found and how they were fixed
+The workflow does, over SSH:
+
+1. `git fetch --prune origin main` + `git reset --hard origin/main`
+2. `docker compose -f docker-compose.production.yml build`
+3. `docker compose -f docker-compose.production.yml run --rm app php artisan migrate --force`
+4. `docker compose -f docker-compose.production.yml up -d --remove-orphans`
+
+Migrations run with the new image while the previous container still serves traffic, so
+a failed migration leaves the running app untouched.
+
+## 5. Cloudflare Tunnel
+
+Point a public hostname at the app port, for example in `~/.cloudflared/config.yml`:
+
+```yaml
+tunnel: catatku
+ingress:
+  - hostname: catatku.<your-domain>
+    service: http://localhost:8080
+  - service: http_status:404
+```
+
+`cloudflared` sends `X-Forwarded-Proto: https`, which is why the trusted-proxy
+configuration above matters.
+
+## 6. Live verification checklist
+
+Run these against `https://catatku.<your-domain>` after the first deploy:
+
+- [ ] `GET /` -> `302` to `/login` with an `https` location
+- [ ] `GET /login` -> `200`, form contains `name="_token"`
+- [ ] `POST /login` without a token -> `419`
+- [ ] login `budi@catatku.test` / `password` -> dashboard shows the user name
+- [ ] `POST /logout` -> back to `/login`, and `/dashboard` redirects again
+- [ ] response cookie is `secure; httponly; samesite=lax`
+- [ ] `GET /halaman-tidak-ada` -> the Indonesian 404 page, no stack trace
+- [ ] `GET /up` -> `200`
+
+## 7. Problems found and how they were fixed
 
 | Problem | Fix |
 | --- | --- |
 | Redirects pointed at `http://` behind the TLS proxy | `trustProxies(at: '*')` + `URL::forceScheme('https')` in production |
-| `SESSION_SECURE_COOKIE` left at its default would send the session over http | Set to `true` on Railway; verified the `secure` flag on a local production container |
-| Railway builds the Dockerfile at the repository root by default | Dockerfile path set to `docker/Dockerfile` in the service settings |
-| A bare `docker build .` fails because the Dockerfile is not at the root | Always build with `-f docker/Dockerfile` |
-| `config:cache` is not run at build time, so `.env` values are never baked into the image | Configuration is read from the injected environment variables at runtime |
-| `podman-compose` keeps the old container after a rebuild | `docker compose up -d --build --force-recreate app` after Dockerfile changes |
+| `SESSION_SECURE_COOKIE` at its default would send the session over http | Set to `true` on the server; the `secure` flag was verified on a local production container |
+| `docker build .` fails because the Dockerfile is not at the repository root | Always build with `-f docker/Dockerfile` |
+| `config:cache` is not run at build time, so no `.env` values are baked into the image | Configuration is read from the injected environment at runtime |
+| A failing migration would take the old container down if it ran after `up -d` | The workflow migrates before `up -d` |
+| `podman-compose` keeps the old container after a rebuild on the dev machine | `docker compose up -d --build --force-recreate app` |
 
-## 6. Subsequent deploys
+## 8. Subsequent deploys
 
 ```bash
-git push origin main                       # Railway redeploys on push
-docker compose exec app php artisan config:clear   # only if config files changed locally
+git push origin main        # GitHub Actions rebuilds, migrates and restarts
 ```
 
-Production database changes happen only through the pre-deploy command
-(`php artisan migrate --force`). Never run `migrate:fresh`, `db:wipe` or `migrate:rollback`
-against the Railway database.
+Production database changes happen only through `php artisan migrate --force`. Never run
+`migrate:fresh`, `db:wipe` or `migrate:rollback` against the server database.

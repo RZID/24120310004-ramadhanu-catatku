@@ -9,6 +9,10 @@
         ['route' => 'wallets.index', 'label' => 'Dompet', 'icon' => 'wallet'],
         ['route' => 'categories.index', 'label' => 'Kategori', 'icon' => 'tag'],
     ];
+
+    if ($user->role === \App\Enums\UserRole::Admin) {
+        $navItems[] = ['route' => 'admin.users.index', 'label' => 'Admin', 'icon' => 'users'];
+    }
 @endphp
 
 <!DOCTYPE html>

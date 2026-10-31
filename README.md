@@ -76,8 +76,17 @@ name; host, user and password come from `.env`.
 
 ## Demo accounts
 
-Created by the seeders (Phase 1). Credentials will be listed here once the seeders
-exist.
+Created by `php artisan migrate:fresh --seed`. Every account uses the password
+`password`.
+
+| Role  | Email                |
+| ----- | -------------------- |
+| admin | `admin@catatku.test` |
+| user  | `budi@catatku.test`  |
+| user  | `siti@catatku.test`  |
+
+The two demo users own 5 wallets, 16 categories and 60 transactions spread over
+August, September and October 2026.
 
 ## Project structure
 

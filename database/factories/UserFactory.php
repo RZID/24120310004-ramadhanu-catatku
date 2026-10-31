@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Database\Factories;
 
+use App\Enums\UserRole;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
@@ -22,6 +23,11 @@ class UserFactory extends Factory
             'email' => fake()->unique()->safeEmail(),
             'password' => 'password',
         ];
+    }
+
+    public function admin(): static
+    {
+        return $this->state(['role' => UserRole::Admin]);
     }
 
     public function deactivated(): static

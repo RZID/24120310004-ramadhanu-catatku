@@ -5,6 +5,8 @@
 
     $navItems = [
         ['route' => 'dashboard', 'label' => 'Dashboard', 'icon' => 'dashboard'],
+        ['route' => 'wallets.index', 'label' => 'Dompet', 'icon' => 'wallet'],
+        ['route' => 'categories.index', 'label' => 'Kategori', 'icon' => 'tag'],
     ];
 @endphp
 
@@ -84,11 +86,31 @@
             </div>
         </header>
 
-        <main class="mx-auto w-full max-w-5xl space-y-6 px-4 py-8 lg:px-8">
+        <main class="mx-auto w-full max-w-5xl space-y-6 px-4 py-8 pb-24 lg:px-8 lg:pb-8">
             <x-flash />
 
             {{ $slot }}
         </main>
+
+        <nav class="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white lg:hidden" aria-label="Navigasi utama">
+            <div class="flex items-stretch">
+                @foreach ($navItems as $item)
+                    @php($active = request()->routeIs($item['route']))
+                    <a
+                        href="{{ route($item['route']) }}"
+                        @if ($active) aria-current="page" @endif
+                        @class([
+                            'flex flex-1 flex-col items-center gap-1 py-2.5 text-xs font-medium transition',
+                            'text-accent-700' => $active,
+                            'text-slate-500' => ! $active,
+                        ])
+                    >
+                        <x-icon :name="$item['icon']" class="size-5" />
+                        {{ $item['label'] }}
+                    </a>
+                @endforeach
+            </div>
+        </nav>
     </div>
 </body>
 </html>

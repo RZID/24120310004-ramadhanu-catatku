@@ -5,6 +5,7 @@
 
     $navItems = [
         ['route' => 'dashboard', 'label' => 'Dashboard', 'icon' => 'dashboard'],
+        ['route' => 'transactions.index', 'label' => 'Transaksi', 'icon' => 'list'],
         ['route' => 'wallets.index', 'label' => 'Dompet', 'icon' => 'wallet'],
         ['route' => 'categories.index', 'label' => 'Kategori', 'icon' => 'tag'],
     ];

@@ -15,6 +15,10 @@
     <a {{ $attributes->merge(['class' => $classes]) }}>
         {{ $slot }}
     </a>
+@elseif ($as === 'span')
+    <span {{ $attributes->merge(['class' => $classes]) }}>
+        {{ $slot }}
+    </span>
 @else
     <button type="{{ $type }}" {{ $attributes->merge(['class' => $classes]) }}>
         {{ $slot }}

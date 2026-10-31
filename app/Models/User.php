@@ -48,6 +48,22 @@ class User extends Authenticatable
         ];
     }
 
+    public function isDeactivated(): bool
+    {
+        return $this->deactivated_at !== null;
+    }
+
+    public function deactivate(): void
+    {
+        // `deactivated_at` is not mass assignable, so it is filled explicitly.
+        $this->forceFill(['deactivated_at' => now()])->save();
+    }
+
+    public function activate(): void
+    {
+        $this->forceFill(['deactivated_at' => null])->save();
+    }
+
     /**
      * @return HasMany<Wallet, $this>
      */

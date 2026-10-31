@@ -23,4 +23,9 @@ class UserFactory extends Factory
             'password' => 'password',
         ];
     }
+
+    public function deactivated(): static
+    {
+        return $this->state(['deactivated_at' => now()]);
+    }
 }

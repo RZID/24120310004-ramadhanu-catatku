@@ -180,3 +180,64 @@ git push origin main        # GitHub Actions rebuilds, migrates and restarts
 
 Production database changes happen only through `php artisan migrate --force`. Never run
 `migrate:fresh`, `db:wipe` or `migrate:rollback` against the server database.
+
+## 9. Final verification — local dry run of the production image
+
+The server is not reachable from this machine yet, so the same steps the workflow runs were
+executed against a **fresh database** with the built image before deploying. This is the
+closest possible rehearsal of the live checklist.
+
+```bash
+docker build -f docker/Dockerfile --target production -t catatku-prod:final .
+# fresh database, so the seeders run on an empty schema
+mysql -e "CREATE DATABASE catatku_prod; GRANT ALL ON catatku_prod.* TO 'catatku'@'%';"
+
+podman run -d --name catatku-final --network catatku_default -p 8004:8080 \
+  -e APP_ENV=production -e APP_DEBUG=false -e APP_KEY=... -e APP_URL=https://catatku.contoh.test \
+  -e DB_HOST=db -e DB_DATABASE=catatku_prod -e DB_USERNAME=catatku -e DB_PASSWORD=... \
+  -e SESSION_DRIVER=database -e CACHE_STORE=database -e QUEUE_CONNECTION=sync \
+  -e SESSION_SECURE_COOKIE=false catatku-prod:final
+
+podman exec catatku-final php artisan migrate --force
+podman exec catatku-final php artisan db:seed --force
+```
+
+Result (real output, 31 October 2026):
+
+```text
+podman exec catatku-final id          -> uid=33(www-data) gid=33(www-data)
+GET  /up                              -> 200
+GET  /                                -> 302 https://localhost:8004/login
+GET  /login                            -> 200, contains name="_token"
+POST /login without a token            -> 419
+POST /login (budi@catatku.test)        -> 302 https://localhost:8004/dashboard
+   Set-Cookie: catatku-session=...; httponly; samesite=lax
+GET  /dashboard                        -> 200, Rp 9.500.000 / Rp 1.190.000 / Rp 8.310.000,
+                                          chart data attribute present, wallet balances
+GET  /transactions                     -> 200, "Halaman 1 dari 2"
+GET  /transactions?month=2026-08&type=income -> 200, only "Gaji bulan Agustus"
+GET  /wallets, /categories             -> 200, 200
+GET  /tidak-ada                        -> 404 "Halaman tidak ditemukan", no stack trace
+POST /transactions (valid)             -> 302, row created with user_id forced to the owner
+POST /transactions (type mismatch)     -> 302 back with the mismatch message
+admin GET /admin/users                 -> 200, "Akun kamu", "31 transaksi"
+budi  GET /admin/users                 -> 403
+POST /logout                           -> 302 https://localhost:8004/login
+GET  /dashboard after logout           -> 302
+```
+
+`SESSION_SECURE_COOKIE` is `false` in this rehearsal because the container is reached over
+plain HTTP on localhost; with `true` the same cookie carries `secure` (verified in §1).
+
+The scratch database and container were removed afterwards:
+`DROP DATABASE catatku_prod`, `podman rm -f catatku-final`. The development database was not
+touched (`users=3`, `transactions=60` before and after).
+
+### What is still unverified
+
+- The live host itself: DNS, Cloudflare Tunnel routing, the four Actions secrets, and the
+  server's `.env`. These cannot be exercised without access.
+- Visual rendering in a browser (chart, 375px layout) and the screenshots in
+  `docs/submission-checklist.md` §3.
+- The `v1.0.0` tag is intentionally **not** created yet: it should mark a commit that passed
+  the live checklist, not a rehearsal.

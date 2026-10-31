@@ -12,9 +12,9 @@ class ApplicationBootTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_home_page_is_served(): void
+    public function test_guests_are_sent_to_the_login_page(): void
     {
-        $this->get('/')->assertOk();
+        $this->get('/')->assertRedirect(route('login'));
     }
 
     public function test_test_suite_runs_against_mysql(): void

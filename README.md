@@ -4,9 +4,6 @@ Personal finance tracker built with Laravel and MySQL: wallets, income/expense
 categories, transactions, and a monthly dashboard. Final project (UAS) for a
 web programming course.
 
-Every decision that was not obvious from the brief is recorded in
-[`docs/decisions.md`](docs/decisions.md).
-
 ## Stack
 
 | Layer     | Choice                                                        |
@@ -96,13 +93,9 @@ bootstrap/      Framework bootstrap and middleware registration (no Kernel.php)
 config/         Configuration, read from .env
 database/       Migrations, factories, seeders
 docker/         Dockerfile (dev + production targets), Apache vhost, MySQL init
-docs/           ERD, architecture, decisions, deployment notes
+docs/           ERD, architecture, MVC structure, roles and deployment notes
 public/         Web root, built Vite assets
 resources/      Blade views, CSS, JavaScript
 routes/         web.php, console.php
 tests/          PHPUnit feature and unit tests
 ```
-
-## Documentation
-
-- [`docs/decisions.md`](docs/decisions.md) — decision log with rationale and cost

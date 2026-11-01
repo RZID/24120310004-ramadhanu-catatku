@@ -200,8 +200,8 @@ jobs:
           [ "$status" -eq 0 ] || fail "$status" "$probe"
 
           set +e
-          output=$(ssh -o BatchMode=yes -o ConnectTimeout=30 "$SSH_HOST" "APP_PATH='$APP_PATH' bash -s" <<'CHECK' 2>&1
-          set -euo pipefail
+          output=$(ssh -o BatchMode=yes -o ConnectTimeout=30 "$SSH_HOST" "APP_PATH='$APP_PATH' sh -s" <<'CHECK' 2>&1
+          set -eu
 
           echo "logged in as $(id -un) on $(hostname)"
           cd "$APP_PATH"
@@ -218,8 +218,8 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           APP_PATH: ${{ secrets.APP_PATH }}
         run: |
-          ssh -o BatchMode=yes "$SSH_HOST" "APP_PATH='$APP_PATH' bash -s" <<'REMOTE'
-          set -euo pipefail
+          ssh -o BatchMode=yes "$SSH_HOST" "APP_PATH='$APP_PATH' sh -s" <<'REMOTE'
+          set -eu
 
           cd "$APP_PATH"
           git fetch --prune origin main
@@ -233,13 +233,17 @@ jobs:
           $compose build
           $compose up -d db
 
+          # Counted loop instead of `seq`: busybox and some minimal images do not
+          # ship it, and the whole script has to stay POSIX sh.
+          attempt=0
           ready=0
-          for _ in $(seq 1 60); do
+          while [ "$attempt" -lt 60 ]; do
             if $compose exec -T db sh -c \
               'mysqladmin ping --host=127.0.0.1 --user=root --password="$MYSQL_ROOT_PASSWORD"' >/dev/null 2>&1; then
               ready=1
               break
             fi
+            attempt=$((attempt + 1))
             sleep 2
           done
 

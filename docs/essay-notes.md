@@ -179,6 +179,14 @@ so nothing here has to be remembered from scratch.
   and hit `Connection refused`, because `depends_on: service_healthy` is not honoured by
   `compose run` on every implementation. Fix: start `db` explicitly and poll `mysqladmin ping`
   before migrating (`.github/workflows/deploy.yml`, deploy step).
+- **A CI step that failed with no message.** The deploy step printed only
+  `Warning: Permanently added '...' to the list of known hosts.` and exited non-zero. The
+  runner log needs authentication to read, but the annotation does not, so the step was changed
+  to put the exit status and the output tail into the annotation; that showed
+  `(exit 127) Output: sh: bash: not found`. The server has no `bash`. Fix: both remote scripts
+  are POSIX `sh` (`set -eu`, a counted `while` loop instead of `seq`) and are invoked with
+  `sh -s` (`.github/workflows/deploy.yml`). Lesson: an empty error is still data — make the
+  pipeline say what it saw.
 
 ## 14. Essay questions from the lecturer
 

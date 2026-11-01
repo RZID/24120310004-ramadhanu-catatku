@@ -267,6 +267,7 @@ output, because the runner log needs authentication to read while the annotation
 | `Check Cloudflare Access` fails with HTTP 000 | the hostname cannot be reached at all | check the published route and that `cloudflared` runs on the server |
 | `Validate the deploy key` fails with "cannot be read as a private key" | the secret lost its newlines, was truncated, or has a passphrase | paste the whole file again with real newlines and without a passphrase |
 | `Verify the SSH connection` fails with "Permission denied" | the key that arrived is not in `authorized_keys` of `SSH_USER`, or that account cannot log in | compare the fingerprints of the two (§3) |
+| `Verify the SSH connection` fails with `sh: bash: not found` (exit 127) | the server has no `bash`; the login shell is `sh` or the image is busybox based | nothing to fix on the server: the remote scripts are POSIX `sh` on purpose, so this only appears when an edit reintroduces `bash -s` or `pipefail` |
 | `Verify the SSH connection` fails with "APP_PATH does not exist" | the repository is not cloned yet | clone it to that path (§3) |
 | `Verify the SSH connection` fails with "docker ... not available" | the user is not in the `docker` group | `sudo usermod -aG docker <user>`, then log in again |
 | `Verify the SSH connection` fails with a handshake or a refused connection | the tunnel route points at the wrong host or port, or sshd is down | the route service must be `SSH` to `localhost:22` |
@@ -437,3 +438,18 @@ Two portability problems were found and fixed this way:
 
 The rehearsal stack was stopped with `docker compose -f docker-compose.production.yml down`
 (no `-v`), so the test volume is still there for a repeat run.
+
+The script was replayed a second time under `dash` after the remote interpreter was changed from
+`bash` to POSIX `sh` (the server has no `bash`, see §4c), with the same result:
+
+```text
+INFO  Nothing to migrate.
+bca5a2c17566  mysql:8.4                  Up 14 seconds (healthy)  3306/tcp, 33060/tcp
+4652ebdfe59f  catatku-app:production     Up 1 second              0.0.0.0:8005->8080/tcp
+EXIT=0
+GET /up -> 200
+GET /login -> 200
+```
+
+`Nothing to migrate` is expected: the volume from the first run is still there. A fresh volume
+runs all six migrations, as shown above.

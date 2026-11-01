@@ -322,43 +322,79 @@ jobs:
             echo ".env is missing in $APP_PATH; copy .env.example and fill it in (docs/deployment.md section 3)" >&2
             exit 1
           fi
-          for key in APP_KEY APP_URL DB_DATABASE DB_USERNAME DB_PASSWORD DB_ROOT_PASSWORD; do
+          for key in APP_KEY APP_URL DB_HOST DB_DATABASE DB_USERNAME DB_PASSWORD; do
             if ! grep -qE "^$key=[^\"']" .env; then
               echo ".env has no value for $key (docs/deployment.md section 3)" >&2
               exit 1
             fi
           done
-          echo ".env has a value for every required key"
+
+          db_host=$(sed -n 's/^DB_HOST=//p' .env | head -1 | tr -d '"' | tr -d "'")
+          if [ "$db_host" = "db" ] && ! grep -qE "^DB_ROOT_PASSWORD=[^\"']" .env; then
+            echo ".env uses the bundled database but has no value for DB_ROOT_PASSWORD" >&2
+            exit 1
+          fi
+          echo ".env has a value for every required key (DB_HOST=$db_host)"
 
           git fetch --prune origin main
           git reset --hard origin/main
 
-          compose="docker compose -f docker-compose.production.yml"
+          # The profile stays active for every command when the database is bundled, so
+          # `up -d --remove-orphans` never treats the running db container as an orphan.
+          if [ "$db_host" = "db" ]; then
+            compose="docker compose --profile bundled-db -f docker-compose.production.yml"
+          else
+            compose="docker compose -f docker-compose.production.yml"
+          fi
 
-          # Build first, then bring the database up and wait for it explicitly:
+          # Build first, then make sure the database answers before migrating:
           # `compose run` does not honour the healthcheck condition on every
           # Compose implementation, and migrate would fail on a cold database.
           $compose build
-          $compose up -d db
 
           # Counted loop instead of `seq`: busybox and some minimal images do not
           # ship it, and the whole script has to stay POSIX sh.
           attempt=0
           ready=0
-          while [ "$attempt" -lt 60 ]; do
-            if $compose exec -T db sh -c \
-              'mysqladmin ping --host=127.0.0.1 --user=root --password="$MYSQL_ROOT_PASSWORD"' >/dev/null 2>&1; then
-              ready=1
-              break
-            fi
-            attempt=$((attempt + 1))
-            sleep 2
-          done
 
-          if [ "$ready" != "1" ]; then
-            echo "The database did not accept connections within 120 seconds." >&2
-            $compose logs --tail 30 db
-            exit 1
+          if [ "$db_host" = "db" ]; then
+            echo "Using the bundled database container"
+            $compose up -d db
+
+            while [ "$attempt" -lt 60 ]; do
+              if $compose exec -T db sh -c \
+                'mysqladmin ping --host=127.0.0.1 --user=root --password="$MYSQL_ROOT_PASSWORD"' >/dev/null 2>&1; then
+                ready=1
+                break
+              fi
+              attempt=$((attempt + 1))
+              sleep 2
+            done
+
+            if [ "$ready" != "1" ]; then
+              echo "The database did not accept connections within 120 seconds." >&2
+              $compose logs --tail 30 db
+              exit 1
+            fi
+          else
+            # The database lives on another machine: prove it is reachable and that
+            # the credentials work before migrating, using the app image itself.
+            echo "Waiting for the external database at $db_host"
+            while [ "$attempt" -lt 60 ]; do
+              if db_error=$($compose run --rm --no-deps app php -r \
+                'new PDO("mysql:host=" . getenv("DB_HOST") . ";port=" . (getenv("DB_PORT") ?: "3306") . ";dbname=" . getenv("DB_DATABASE"), getenv("DB_USERNAME"), getenv("DB_PASSWORD"));' 2>&1); then
+                ready=1
+                break
+              fi
+              attempt=$((attempt + 1))
+              sleep 2
+            done
+
+            if [ "$ready" != "1" ]; then
+              echo "The external database at $db_host did not answer within 120 seconds." >&2
+              echo "$db_error" >&2
+              exit 1
+            fi
           fi
 
           # Migrate with the new image while the previous container still serves

@@ -94,8 +94,13 @@ Edit `.env` on the server. These values differ from development:
 | `LOG_CHANNEL` | `stderr` |
 | `SESSION_SECURE_COOKIE` | `true` |
 | `DB_HOST` | `db` |
+| `DB_DATABASE` / `DB_USERNAME` | database name and user for this server (keep the example values if you like) |
 | `DB_PASSWORD` / `DB_ROOT_PASSWORD` | real secrets, not the example values |
-| `APP_PORT` | host port for the app container, default `8080` |
+| `APP_PORT` | host port for the app container, default `8080`; set `127.0.0.1:8080` when `cloudflared` runs on the same host |
+
+Everything else stays as it is in `.env.example`: `SESSION_DRIVER=database`,
+`CACHE_STORE=database`, `QUEUE_CONNECTION=sync`, `APP_LOCALE=id`, `DB_CONNECTION=mysql`,
+`DB_PORT=3306`.
 
 `.env` is untracked, so the deploy's `git reset --hard` never overwrites or deletes it.
 
@@ -116,15 +121,26 @@ the demo rows on every deploy, which is why the workflow never calls them.
 The workflow (`.github/workflows/deploy.yml`) runs on every push to `main` and on
 `workflow_dispatch`.
 
-| Secret | Content |
-| --- | --- |
-| `SSH_HOST` | hostname or IP the runner connects to |
-| `SSH_USER` | user that owns the clone and can run `docker` |
-| `SSH_PRIVATE_KEY` | private key of a deploy keypair, newline-safe |
-| `APP_PATH` | absolute path of the clone, e.g. `/srv/catatku` |
+| Secret | Content | Where the value comes from |
+| --- | --- | --- |
+| `SSH_HOST` | hostname the runner connects to | the SSH hostname published through the tunnel, e.g. `ssh.<domain>` (see §4b). **Not** an IP address when the server has no public one |
+| `SSH_USER` | user that owns the clone and can run `docker` | `whoami` on the server |
+| `SSH_PRIVATE_KEY` | whole private key, from `-----BEGIN` to `-----END` | `ssh-keygen -t ed25519 -f ~/.ssh/catatku_deploy -N ""` then `cat ~/.ssh/catatku_deploy`; the matching `.pub` goes into the server's `~/.ssh/authorized_keys` |
+| `APP_PATH` | absolute path of the clone | `pwd` inside the clone on the server, e.g. `/srv/catatku` |
+| `CF_ACCESS_CLIENT_ID` | Access service token id, `<32 hex>.access` | Zero Trust → Access → Service credentials → Service tokens (see §4b). Optional: only when the host is reached through the tunnel |
+| `CF_ACCESS_CLIENT_SECRET` | the matching secret, `cfast_…` or 64 hex | same screen, shown only once at creation |
+
+`CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` are optional as a pair: set both to go
+through the tunnel, leave both empty for a host with a public SSH port. Setting only one fails
+the first step with an explicit message.
+
+Nothing else has to be configured in GitHub: the workflow does not use `GITHUB_TOKEN`, so no
+Actions permission changes are needed. Database passwords live in the server's `.env` (§3) and
+never become repository secrets.
 
 The workflow does, over SSH:
 
+0. verifies the login and `docker compose version` before touching anything
 1. `git fetch --prune origin main` + `git reset --hard origin/main`
 2. `docker compose -f docker-compose.production.yml build`
 3. `docker compose -f docker-compose.production.yml run --rm app php artisan migrate --force`
@@ -242,45 +258,69 @@ touched (`users=3`, `transactions=60` before and after).
 - The `v1.0.0` tag is intentionally **not** created yet: it should mark a commit that passed
   the live checklist, not a rehearsal.
 
-## 4b. Kalau server hanya bisa dijangkau lewat Cloudflare Tunnel
+## 4b. SSH through Cloudflare Tunnel (no public IP)
 
-Runner GitHub berjalan di internet publik, jadi ia hanya bisa `ssh` ke server yang port 22-nya
-terbuka. Kalau server berada di balik Cloudflare Tunnel (tidak punya IP publik), SSH harus
-diteruskan lewat `cloudflared` di sisi runner:
+The runner sits on the public internet, so `ssh` to the server only works if port 22 is
+reachable. When the host has no public IP, publish SSH through the same tunnel and let
+`cloudflared` on the runner open the connection — the tunnel is outbound from the server, so
+no inbound port is ever opened.
 
-1. Tambahkan aplikasi Access untuk SSH di dashboard Cloudflare (`cloudflared tunnel route ssh
-   ssh.<domain> --hostname <host>`), lalu buat **service token** Access.
-2. Di workflow, sebelum langkah `Set up SSH`, pasang `cloudflared` dan set `ProxyCommand`:
+1. **Publish the SSH route.** Dashboard → **Networking** → **Tunnels** → your tunnel →
+   **Routes** → **Add route** → **Published application**. Pick your zone and the subdomain
+   `ssh`, then set the service to **SSH** with `localhost:22` (or `<server IP>:22` when the
+   tunnel runs on a different machine than the SSH server).
+2. **Protect it with Access.** Zero Trust → **Access** → **Applications** → add a
+   self-hosted application for `ssh.<domain>` with a policy whose action is **Service Auth**.
+   Without this, Access asks for a browser login that the runner cannot complete.
+3. **Create the token.** Zero Trust → **Access** → **Service credentials** → **Service
+   tokens** → **Create Service Token**. Copy the Client ID (`<32 hex>.access`) and the Client
+   Secret (shown once; `cfast_…` on new accounts, 64 hex on older ones).
+4. **Fill the secrets.** `SSH_HOST=ssh.<domain>`, `CF_ACCESS_CLIENT_ID`,
+   `CF_ACCESS_CLIENT_SECRET` — see the table in §4.
 
-   ```yaml
-   - name: Install cloudflared
-     run: |
-       curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
-         -o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared
+The workflow then downloads `cloudflared` and writes this `~/.ssh/config` (mode 600):
 
-   - name: Configure SSH proxy
-     env:
-       CF_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-       CF_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-     run: |
-       printf 'Host %s\n  ProxyCommand cloudflared access ssh --hostname %%h\n' "${{ secrets.SSH_HOST }}" \
-         >> ~/.ssh/config
-       printf 'export TUNNEL_SERVICE_TOKEN_ID=%s\nexport TUNNEL_SERVICE_TOKEN_SECRET=%s\n' \
-         "$CF_ID" "$CF_SECRET" > ~/.cloudflared-token
-       cat ~/.cloudflared-token >> ~/.bashrc
-   ```
+```text
+Host ssh.<domain>
+  User deploy
+  IdentityFile ~/.ssh/deploy_key
+  IdentitiesOnly yes
+  StrictHostKeyChecking accept-new
+  ProxyCommand ~/.local/bin/cloudflared access ssh --hostname %h --service-token-id <id> --service-token-secret <secret>
+```
 
-3. Secret tambahan: `CF_ACCESS_CLIENT_ID` dan `CF_ACCESS_CLIENT_SECRET`.
+The token is passed as flags instead of `TUNNEL_SERVICE_TOKEN_ID` / `TUNNEL_SERVICE_TOKEN_SECRET`
+because `cloudflared access ssh` does not honour those variables on every version; the flags
+work everywhere. `StrictHostKeyChecking accept-new` pins the host key on the first connection
+and refuses a changed key afterwards. The runner is destroyed when the job ends, so the copy of
+the token on disk only lives for the duration of the deploy.
 
-Jika server punya IP publik dan port 22 terbuka, langkah 4b ini tidak perlu — cukup empat
-secret di `docs/deployment.md` §4.
+Reproduce the exact same path from your laptop before trusting CI:
+
+```bash
+ssh -F ~/.ssh/config deploy@ssh.<domain> 'cd /srv/catatku && git log -1 --oneline'
+```
+
+with the `ProxyCommand` line above in your own `~/.ssh/config`, or directly:
+
+```bash
+cloudflared access ssh --hostname ssh.<domain> \
+  --service-token-id "$CF_ACCESS_CLIENT_ID" \
+  --service-token-secret "$CF_ACCESS_CLIENT_SECRET"
+```
+
+If the host does have a public IP and port 22 open, skip this section entirely: leave both
+`CF_*` secrets empty and the workflow falls back to `ssh-keyscan` plus a plain `ssh`.
 
 ## 4c. Kegagalan workflow yang umum
 
 | Gejala | Penyebab | Perbaikan |
 | --- | --- | --- |
-| Gagal di `Check required secrets` | nama secret salah atau nilainya kosong | buat ulang dengan nama persis: `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY`, `APP_PATH` |
-| Gagal di `Check required secrets` dengan pesan format | private key ditempel sebagian (hanya satu baris) | tempel seluruh isi file, dari `-----BEGIN` sampai `-----END ...-----` |
-| Gagal di `Set up SSH` | runner tidak bisa `ssh-keyscan` ke host | cek firewall/port 22, atau pakai §4b |
-| Gagal di `Pull, rebuild and migrate` | `APP_PATH` salah, repo belum di-clone di server, atau user tidak bisa menjalankan `docker` | cek `cd "$APP_PATH"` manual di server dan `docker compose version` |
-| Workflow hijau tapi URL 404 | container jalan tapi tunnel belum diarahkan | cek ingress `cloudflared`, lihat §5 |
+| Gagal di `Check required secrets`, pesan "is empty or missing" | nama secret salah atau nilainya kosong | buat ulang dengan nama persis: `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY`, `APP_PATH` |
+| Gagal di `Check required secrets`, pesan format key | private key ditempel sebagian (hanya satu baris) | tempel seluruh isi file, dari `-----BEGIN` sampai `-----END ...-----` |
+| Gagal di `Check required secrets`, pesan `CF_ACCESS_CLIENT_ID is set but ...` | hanya satu dari pasangan token yang diisi | isi keduanya, atau kosongkan keduanya |
+| Gagal di `Set up SSH`, pesan "Cannot reach ... on port 22" | host tidak punya IP publik | pakai §4b, lalu isi `SSH_HOST` dengan hostname tunnel |
+| Gagal di `Set up SSH` saat `cloudflared`/`access ssh` | policy Access bukan **Service Auth**, token kedaluwarsa atau dicabut, atau hostname salah | periksa Access → Applications → policy, lalu buat token baru |
+| Gagal di `Verify the SSH connection` | key tidak masuk `authorized_keys`, user salah, atau `docker compose` tidak bisa dijalankan user itu | uji `ssh deploy@host 'docker compose version'` manual; tambahkan user ke grup `docker` |
+| Gagal di `Pull, rebuild and migrate` | `APP_PATH` salah, repo belum di-clone, atau build gagal | cek `cd "$APP_PATH"` manual di server dan `docker compose version` |
+| Workflow hijau tapi URL 404 | container jalan tapi rute tunnel belum diarahkan | cek ingress `cloudflared`, lihat §5 |

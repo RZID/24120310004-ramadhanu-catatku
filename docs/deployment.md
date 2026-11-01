@@ -299,6 +299,17 @@ output, because the runner log needs authentication to read while the annotation
 
 ## 5. Cloudflare Tunnel
 
+Only one port ever leaves the container: nginx on `8080` (published as `${APP_PORT:-8080}`).
+php-fpm listens on `127.0.0.1:9000` **inside** the container, so it is not reachable from the
+host at all and must never be published or routed to.
+
+| Port | Where | Publishes it | Needs a tunnel route |
+| --- | --- | --- | --- |
+| 8080 | nginx in the `app` container | `APP_PORT` in `docker-compose.production.yml` | yes, `https` → `http://localhost:8080` |
+| 9000 | php-fpm, `127.0.0.1` inside `app` | nothing | **no**, and it would be an RCE risk |
+| 22 | sshd on the host | the SSH route only | yes, `ssh` → `localhost:22` |
+| 3306 | MySQL, `db` container | nothing (no `ports:` entry) | no |
+
 Point a public hostname at the app port, for example in `~/.cloudflared/config.yml`:
 
 ```yaml
@@ -310,7 +321,9 @@ ingress:
 ```
 
 `cloudflared` sends `X-Forwarded-Proto: https`, which is why the trusted-proxy
-configuration above matters.
+configuration above matters. If `cloudflared` runs in its own container instead of on the host,
+give it the same network as `app` and use `http://app:8080`, and set `APP_PORT=127.0.0.1:8080`
+so the app stays off the LAN.
 
 ## 6. Live verification checklist
 

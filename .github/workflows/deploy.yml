@@ -13,6 +13,11 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
+    # Job level so a step can test them in `if:`; secrets are not available there.
+    env:
+      CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+      CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+
     steps:
       - name: Check required secrets
         env:
@@ -20,8 +25,6 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           APP_PATH: ${{ secrets.APP_PATH }}
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           missing=0
 
@@ -55,13 +58,39 @@ jobs:
 
           exit "$missing"
 
+      - name: Check Cloudflare Access
+        if: env.CF_ACCESS_CLIENT_ID != ''
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 \
+            -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+            "https://$SSH_HOST/") || code=000
+
+          case "$code" in
+            302)
+              echo "::error::Access redirected to a login page, so the policy on $SSH_HOST is not Service Auth. Edit the Access application and set the policy action to Service Auth, then include the service token in it."
+              exit 1
+              ;;
+            401 | 403)
+              echo "::error::Access rejected the service token for $SSH_HOST (HTTP $code): the token is wrong, expired, revoked, or no policy grants it access."
+              exit 1
+              ;;
+            000)
+              echo "::error::https://$SSH_HOST cannot be reached at all: check that the published route exists and that cloudflared is running on the server."
+              exit 1
+              ;;
+            *)
+              echo "Access accepted the service token (HTTP $code)"
+              ;;
+          esac
+
       - name: Set up SSH
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
@@ -109,7 +138,8 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           APP_PATH: ${{ secrets.APP_PATH }}
         run: |
-          if ! ssh -o BatchMode=yes -o ConnectTimeout=30 "$SSH_HOST" "APP_PATH='$APP_PATH' bash -s" <<'CHECK'
+          set +e
+          output=$(ssh -o BatchMode=yes -o ConnectTimeout=30 "$SSH_HOST" "APP_PATH='$APP_PATH' bash -s" <<'CHECK' 2>&1
           set -euo pipefail
 
           echo "logged in as $(id -un) on $(hostname)"
@@ -117,10 +147,35 @@ jobs:
           echo "clone at $(pwd) on branch $(git rev-parse --abbrev-ref HEAD)"
           docker compose version
           CHECK
-          then
-            echo "::error::SSH login or the remote checks failed. See docs/deployment.md section 4c for the usual causes."
-            exit 1
-          fi
+          )
+          status=$?
+          set -e
+
+          echo "$output"
+          [ "$status" -eq 0 ] && exit 0
+
+          case "$output" in
+            *"Permission denied"*)
+              echo "::error::The server refused the deploy key. Append the public half of SSH_PRIVATE_KEY to ~/.ssh/authorized_keys for SSH_USER, and make sure that user is allowed to log in."
+              ;;
+            *"Host key verification failed"*)
+              echo "::error::The server presented a different host key than on a previous run. Confirm the key really changed before deleting it from known_hosts."
+              ;;
+            *"docker: not found"* | *"command not found"*)
+              echo "::error::Logged in, but docker or docker compose is not available to SSH_USER. Add the user to the docker group and open a new session."
+              ;;
+            *"No such file or directory"*)
+              echo "::error::APP_PATH does not exist on the server. Clone the repository there first (docs/deployment.md section 3)."
+              ;;
+            *"handshake"* | *"connection refused"* | *"Connection refused"* | *"connection reset"* | *"timed out"*)
+              echo "::error::The tunnel accepted the token but SSH did not answer. Check that the published route points at the right host and port (localhost:22) and that sshd is running."
+              ;;
+            *)
+              echo "::error::SSH login or the remote checks failed. See docs/deployment.md section 4c for the usual causes."
+              ;;
+          esac
+
+          exit 1
 
       - name: Pull, rebuild and migrate
         env:
@@ -134,12 +189,34 @@ jobs:
           git fetch --prune origin main
           git reset --hard origin/main
 
-          # Build first, migrate with the new image while the old container still
-          # serves traffic, then swap the app container over.
-          docker compose -f docker-compose.production.yml build
-          docker compose -f docker-compose.production.yml run --rm app \
-            php artisan migrate --force
-          docker compose -f docker-compose.production.yml up -d --remove-orphans
+          compose="docker compose -f docker-compose.production.yml"
 
-          docker compose -f docker-compose.production.yml ps
+          # Build first, then bring the database up and wait for it explicitly:
+          # `compose run` does not honour the healthcheck condition on every
+          # Compose implementation, and migrate would fail on a cold database.
+          $compose build
+          $compose up -d db
+
+          ready=0
+          for _ in $(seq 1 60); do
+            if $compose exec -T db sh -c \
+              'mysqladmin ping --host=127.0.0.1 --user=root --password="$MYSQL_ROOT_PASSWORD"' >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$ready" != "1" ]; then
+            echo "The database did not accept connections within 120 seconds." >&2
+            $compose logs --tail 30 db
+            exit 1
+          fi
+
+          # Migrate with the new image while the previous container still serves
+          # traffic, so a failed migration leaves the running app untouched.
+          $compose run --rm app php artisan migrate --force
+          $compose up -d --remove-orphans
+
+          $compose ps
           REMOTE

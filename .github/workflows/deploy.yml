@@ -109,8 +109,15 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           APP_PATH: ${{ secrets.APP_PATH }}
         run: |
-          if ! ssh -o BatchMode=yes -o ConnectTimeout=30 "$SSH_HOST" \
-            "echo \"logged in as \$(id -un) on \$(hostname)\"; cd '$APP_PATH' && git rev-parse --abbrev-ref HEAD; docker compose version"; then
+          if ! ssh -o BatchMode=yes -o ConnectTimeout=30 "$SSH_HOST" "APP_PATH='$APP_PATH' bash -s" <<'CHECK'
+          set -euo pipefail
+
+          echo "logged in as $(id -un) on $(hostname)"
+          cd "$APP_PATH"
+          echo "clone at $(pwd) on branch $(git rev-parse --abbrev-ref HEAD)"
+          docker compose version
+          CHECK
+          then
             echo "::error::SSH login or the remote checks failed. See docs/deployment.md section 4c for the usual causes."
             exit 1
           fi

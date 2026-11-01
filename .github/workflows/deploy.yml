@@ -342,10 +342,14 @@ jobs:
           # The profile stays active for every command when the database is bundled, so
           # `up -d --remove-orphans` never treats the running db container as an orphan.
           if [ "$db_host" = "db" ]; then
+            db_mode="bundled container (DB_HOST=db)"
             compose="docker compose --profile bundled-db -f docker-compose.production.yml"
           else
+            db_mode="external database at $db_host"
             compose="docker compose -f docker-compose.production.yml"
           fi
+          # Printed early so a failure further down still says which database was used.
+          echo "database mode: $db_mode"
 
           # Build first, then make sure the database answers before migrating:
           # `compose run` does not honour the healthcheck condition on every
@@ -358,7 +362,7 @@ jobs:
           ready=0
 
           if [ "$db_host" = "db" ]; then
-            echo "Using the bundled database container"
+            echo "Starting the bundled database container"
             $compose up -d db
 
             while [ "$attempt" -lt 60 ]; do
@@ -410,6 +414,12 @@ jobs:
 
           printf '%s\n' "$output"
           if [ "$status" -ne 0 ]; then
-            echo "::error::The remote deploy failed (exit $status). Output: $(printf '%s' "$output" | tr '\n' ' ' | tr -s ' ' | tail -c 900)"
+            # Laravel prints the exception message above a long stack trace, so the tail
+            # alone only shows vendor frames. Report the message as well.
+            reason=$(printf '%s\n' "$output" \
+              | grep -m1 -E 'In [A-Za-z0-9_\\./]+\.php line [0-9]+|SQLSTATE\[|^(Error|Exception|PDOException)' \
+              || true)
+            mode=$(printf '%s\n' "$output" | grep -m1 '^database mode: ' || true)
+            echo "::error::The remote deploy failed (exit $status, ${mode:-database mode unknown}). ${reason} Last lines: $(printf '%s' "$output" | tr '\n' ' ' | tr -s ' ' | tail -c 400)"
             exit 1
           fi

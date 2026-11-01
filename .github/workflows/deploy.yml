@@ -86,16 +86,32 @@ jobs:
               ;;
           esac
 
-      - name: Set up SSH
+      - name: Validate the deploy key
         env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_USER: ${{ secrets.SSH_USER }}
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
+          # Parse the key here, so a mangled or passphrase protected secret is
+          # reported as such instead of surfacing later as "Permission denied".
+          if ! ssh-keygen -y -f ~/.ssh/deploy_key < /dev/null > ~/.ssh/deploy_key.pub 2> /tmp/keyerr; then
+            echo "::error::SSH_PRIVATE_KEY cannot be read as a private key ($(tr -d '\n' < /tmp/keyerr)). Paste the file exactly as ssh-keygen wrote it, with real newlines, no passphrase, from BEGIN to END."
+            exit 1
+          fi
+          chmod 644 ~/.ssh/deploy_key.pub
+
+          # The public half is not a secret and identifies the key unambiguously.
+          echo "Deploy key: $(ssh-keygen -lf ~/.ssh/deploy_key.pub | awk '{print $2}')"
+          echo "Public half, which must appear in the server's authorized_keys:"
+          cat ~/.ssh/deploy_key.pub
+
+      - name: Set up SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
           if [ -n "$CF_ACCESS_CLIENT_ID" ]; then
             mkdir -p ~/.local/bin
             curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
@@ -156,7 +172,7 @@ jobs:
 
           case "$output" in
             *"Permission denied"*)
-              echo "::error::The server refused the deploy key. Append the public half of SSH_PRIVATE_KEY to ~/.ssh/authorized_keys for SSH_USER, and make sure that user is allowed to log in."
+              echo "::error::The server refused the deploy key. Compare the fingerprint printed by the previous step with 'ssh-keygen -lf ~/.ssh/authorized_keys' on the server: the public half of SSH_PRIVATE_KEY must be in that file for SSH_USER, with mode 600 on the file and 700 on ~/.ssh."
               ;;
             *"Host key verification failed"*)
               echo "::error::The server presented a different host key than on a previous run. Confirm the key really changed before deleting it from known_hosts."

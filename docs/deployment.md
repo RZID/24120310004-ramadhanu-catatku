@@ -104,6 +104,27 @@ Everything else stays as it is in `.env.example`: `SESSION_DRIVER=database`,
 
 `.env` is untracked, so the deploy's `git reset --hard` never overwrites or deletes it.
 
+Then authorize the deploy key. On your own machine, print the public half of the key whose
+private half went into `SSH_PRIVATE_KEY`:
+
+```bash
+ssh-keygen -y -f ~/.ssh/catatku_deploy          # prints ssh-ed25519 AAAA... comment
+ssh-keygen -lf ~/.ssh/catatku_deploy.pub        # the same key as a fingerprint
+```
+
+On the server, append exactly that line to the account the runner logs in as:
+
+```bash
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+printf '%s\n' 'ssh-ed25519 AAAA... comment' >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+ssh-keygen -lf ~/.ssh/authorized_keys           # must print the fingerprint above
+```
+
+The workflow prints the fingerprint of the key it received before it connects, so the two
+numbers can be compared in one glance. A mismatch is the single most common reason for a
+`Permission denied (publickey)` on the first run.
+
 First boot:
 
 ```bash
@@ -239,7 +260,8 @@ If the host does have a public IP and port 22 open, skip this section entirely: 
 | `Check Cloudflare Access` fails with HTTP 302 | the Access policy is not **Service Auth** | set the policy action of the `ssh.<domain>` application to Service Auth and include the service token in that policy |
 | `Check Cloudflare Access` fails with HTTP 401/403 | the token is wrong, expired, revoked, or no policy covers it | rotate or recreate the token, then check the policy includes it |
 | `Check Cloudflare Access` fails with HTTP 000 | the hostname cannot be reached at all | check the published route and that `cloudflared` runs on the server |
-| `Verify the SSH connection` fails with "Permission denied" | the public key is not in `authorized_keys` | append the `.pub` of the keypair to `~/.ssh/authorized_keys` of `SSH_USER` |
+| `Validate the deploy key` fails with "cannot be read as a private key" | the secret lost its newlines, was truncated, or has a passphrase | paste the whole file again with real newlines and without a passphrase |
+| `Verify the SSH connection` fails with "Permission denied" | the key that arrived is not in `authorized_keys` of `SSH_USER`, or that account cannot log in | compare the fingerprints of the two (§3) |
 | `Verify the SSH connection` fails with "APP_PATH does not exist" | the repository is not cloned yet | clone it to that path (§3) |
 | `Verify the SSH connection` fails with "docker ... not available" | the user is not in the `docker` group | `sudo usermod -aG docker <user>`, then log in again |
 | `Verify the SSH connection` fails with a handshake or a refused connection | the tunnel route points at the wrong host or port, or sshd is down | the route service must be `SSH` to `localhost:22` |

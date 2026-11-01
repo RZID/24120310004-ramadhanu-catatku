@@ -1,61 +1,61 @@
 # Architecture — Catatku
 
-Aplikasi server-rendered: satu request masuk lewat router, melewati middleware, diarahkan
-ke controller, divalidasi FormRequest, menyentuh Eloquent, lalu mengembalikan Blade atau
-redirect. Tidak ada API, SPA, atau service layer.
+A server-rendered application: one request enters through the router, passes middleware, reaches
+a controller, is validated by a FormRequest, touches Eloquent, and returns Blade or a redirect.
+There is no API, no SPA and no service layer.
 
-## Alur satu request
+## One request end to end
 
 ```mermaid
 flowchart TD
     A[Browser] --> B[public/index.php]
     B --> C[bootstrap/app.php]
     C --> D[Router routes/web.php]
-    D --> E{Middleware grup web}
+    D --> E{Middleware: web group}
     E --> E1[StartSession]
     E1 --> E2[VerifyCsrfToken]
     E2 --> E3[EnsureUserIsActive]
-    E3 --> E4{Middleware rute}
+    E3 --> E4{Route middleware}
     E4 -->|guest| F1[Auth\\LoginController]
     E4 -->|auth| F2[Wallet/Category/Transaction/DashboardController]
     E4 -->|auth + admin| F3[Admin\\UserController]
-    F1 --> G[FormRequest validasi]
+    F1 --> G[FormRequest validation]
     F2 --> G
-    F3 --> H[Policy authorize / query milik user]
+    F3 --> H[Policy authorize / owner-scoped query]
     G --> H
     H --> I[(Eloquent -> MySQL)]
     I --> J[Blade view / redirect]
     J --> K[Browser]
 ```
 
-Contoh konkret untuk `GET /transactions?month=2026-08`:
+The concrete path for `GET /transactions?month=2026-08`:
 
-1. `routes/web.php:28` — resource route di dalam grup `auth`.
-2. `EnsureUserIsActive` (`app/Http/Middleware/EnsureUserIsActive.php`) — user nonaktif
-   langsung di-logout.
-3. `TransactionFilterRequest` — `month`, `type`, `category_id` divalidasi sebelum dipakai.
-4. `TransactionController::index` — query dibangun dari `$user->transactions()`.
-5. `scopeForMonth` (`app/Models/Transaction.php:69`) menambah rentang tanggal.
-6. `paginate(15)->withQueryString()` mengembalikan paginator.
-7. `resources/views/transactions/index.blade.php` merender tabel + filter + pagination.
+1. `routes/web.php:28` — the resource route inside the `auth` group.
+2. `EnsureUserIsActive` (`app/Http/Middleware/EnsureUserIsActive.php`) — a deactivated user is
+   logged out immediately.
+3. `TransactionFilterRequest` — `month`, `type` and `category_id` are validated before use.
+4. `TransactionController::index` — the query is built from `$user->transactions()`.
+5. `scopeForMonth` (`app/Models/Transaction.php:69`) adds the date range.
+6. `paginate(15)->withQueryString()` returns the paginator.
+7. `resources/views/transactions/index.blade.php` renders the table, filters and pagination.
 
-## Tabel routing
+## Routing table
 
-Dihasilkan dari `php artisan route:list --except-vendor` (29 rute).
+Produced by `php artisan route:list --except-vendor` (29 routes).
 
-### Publik
+### Public
 
-| Method | URI | Nama | Handler | Middleware |
+| Method | URI | Name | Handler | Middleware |
 | --- | --- | --- | --- | --- |
-| GET | `/` | — | redirect ke dashboard/login | web |
+| GET | `/` | — | redirect to dashboard or login | web |
 | GET | `/register` | `register` | `Auth\RegisterController@create` | guest |
 | POST | `/register` | — | `Auth\RegisterController@store` | guest + `throttle:6,1` |
 | GET | `/login` | `login` | `Auth\LoginController@create` | guest |
 | POST | `/login` | — | `Auth\LoginController@store` | guest + `throttle:5,1` |
 
-### Perlu login
+### Login required
 
-| Method | URI | Nama | Handler |
+| Method | URI | Name | Handler |
 | --- | --- | --- | --- |
 | GET | `/dashboard` | `dashboard` | `DashboardController` (invokable) |
 | GET | `/transactions` | `transactions.index` | `TransactionController@index` |
@@ -78,26 +78,26 @@ Dihasilkan dari `php artisan route:list --except-vendor` (29 rute).
 | DELETE | `/categories/{category}` | `categories.destroy` | `CategoryController@destroy` |
 | POST | `/logout` | `logout` | `Auth\LogoutController@destroy` |
 
-### Perlu login + role admin
+### Login + admin role required
 
-| Method | URI | Nama | Handler |
+| Method | URI | Name | Handler |
 | --- | --- | --- | --- |
 | GET | `/admin/users` | `admin.users.index` | `Admin\UserController@index` |
 | POST | `/admin/users/{user}/deactivate` | `admin.users.deactivate` | `Admin\UserController@deactivate` |
 | POST | `/admin/users/{user}/activate` | `admin.users.activate` | `Admin\UserController@activate` |
 | DELETE | `/admin/users/{user}` | `admin.users.destroy` | `Admin\UserController@destroy` |
 
-## Lapisan dan tanggung jawab
+## Layers and responsibilities
 
-| Lapisan | Lokasi | Isi |
+| Layer | Location | Content |
 | --- | --- | --- |
-| Routing | `routes/web.php` | tiga grup: `guest`, `auth`, `auth` + `admin` |
-| Middleware | `app/Http/Middleware`, `bootstrap/app.php` | `EnsureUserIsActive` (grup web), `EnsureUserIsAdmin` (alias `admin`) |
-| Validasi | `app/Http/Requests` | satu request per resource, dipakai store dan update |
-| Otorisasi | `app/Policies`, query ber-scope | policy untuk id dari URL, relasi user untuk daftar |
-| Domain | `app/Models`, `app/Enums` | relasi, cast, scope, label/ikon enum |
-| Agregasi | `app/Support` | `MonthlySummary`, `Money` |
-| Tampilan | `resources/views` | layout, komponen, halaman per resource |
+| Routing | `routes/web.php` | three groups: `guest`, `auth`, `auth` + `admin` |
+| Middleware | `app/Http/Middleware`, `bootstrap/app.php` | `EnsureUserIsActive` (web group), `EnsureUserIsAdmin` (alias `admin`) |
+| Validation | `app/Http/Requests` | one request per resource, shared by store and update |
+| Authorization | `app/Policies`, owner-scoped queries | policies for ids from the URL, user relationships for lists |
+| Domain | `app/Models`, `app/Enums` | relationships, casts, scopes, enum labels and icons |
+| Aggregation | `app/Support` | `MonthlySummary`, `Money` |
+| Presentation | `resources/views` | layout, components, one page per resource |
 
-Tidak ada Repository, DTO, atau service layer: controller tipis, logika query ada di model,
-dan satu-satunya kelas bantu adalah agregasi dashboard serta format uang.
+There is no repository, DTO or service layer: controllers are thin, query logic lives in the
+models, and the only helper classes are the dashboard aggregation and the money formatter.

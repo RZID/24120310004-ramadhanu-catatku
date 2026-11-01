@@ -1,66 +1,66 @@
-# Struktur MVC
+# MVC structure
 
-Pohon direktori yang benar-benar ada di repo, satu baris keterangan per folder atau file
-penting.
+The directory tree that actually exists in the repository, one line per folder or important
+file.
 
 ```text
 app/
 ├── Enums/
-│   ├── TransactionType.php        income/expense + label() dan icon() untuk tampilan
-│   └── UserRole.php               admin/user + label()
+│   ├── TransactionType.php        income/expense plus label() and icon() for the UI
+│   └── UserRole.php               admin/user plus label()
 ├── Http/
 │   ├── Controllers/
-│   │   ├── Controller.php         kelas dasar, menyertakan AuthorizesRequests
-│   │   ├── DashboardController.php  ringkasan bulan + saldo dompet + 5 transaksi
-│   │   ├── TransactionController.php CRUD transaksi + filter daftar
-│   │   ├── WalletController.php   CRUD dompet
-│   │   ├── CategoryController.php CRUD kategori
-│   │   ├── Admin/UserController.php  daftar akun, aktif/nonaktif, hapus
+│   │   ├── Controller.php         base class, pulls in AuthorizesRequests
+│   │   ├── DashboardController.php  monthly summary, wallet balances, 5 latest transactions
+│   │   ├── TransactionController.php transaction CRUD plus list filters
+│   │   ├── WalletController.php   wallet CRUD
+│   │   ├── CategoryController.php category CRUD
+│   │   ├── Admin/UserController.php  account list, deactivate/reactivate, delete
 │   │   └── Auth/
-│   │       ├── LoginController.php   form + autentikasi + regenerate sesi
-│   │       ├── LogoutController.php  invalidate sesi + regenerate token CSRF
-│   │       └── RegisterController.php  buat akun + login otomatis
+│   │       ├── LoginController.php   form, authentication, session regeneration
+│   │       ├── LogoutController.php  session invalidation plus CSRF token regeneration
+│   │       └── RegisterController.php account creation plus automatic login
 │   ├── Middleware/
-│   │   ├── EnsureUserIsActive.php  logout paksa untuk akun yang dinonaktifkan
-│   │   └── EnsureUserIsAdmin.php   403 untuk non-admin di /admin
+│   │   ├── EnsureUserIsActive.php  force logout for a deactivated account
+│   │   └── EnsureUserIsAdmin.php   403 for non-admins under /admin
 │   └── Requests/
-│       ├── Auth/LoginRequest.php        kredensial + pesan gagal generik
-│       ├── Auth/RegisterRequest.php     email lowercase, unique, aturan kata sandi
-│       ├── CategoryRequest.php          nama + tipe, unik per (user, nama, tipe)
-│       ├── DashboardRequest.php         validasi bulan (Y-m)
-│       ├── TransactionFilterRequest.php validasi filter daftar
-│       ├── TransactionRequest.php       kepemilikan FK, nominal, tanggal, tipe = kategori
-│       └── WalletRequest.php            nama unik per pemilik
+│       ├── Auth/LoginRequest.php        credentials plus one generic failure message
+│       ├── Auth/RegisterRequest.php     lowercase email, unique rule, password rules
+│       ├── CategoryRequest.php          name and type, unique per (user, name, type)
+│       ├── DashboardRequest.php         month validation (Y-m)
+│       ├── TransactionFilterRequest.php list filter validation
+│       ├── TransactionRequest.php       FK ownership, amount, date, type equals category type
+│       └── WalletRequest.php            name unique per owner
 ├── Models/
-│   ├── User.php            role/deactivated_at cast, relasi, deactivate/activate
-│   ├── Wallet.php          relasi user + transactions
-│   ├── Category.php        cast tipe, relasi
-│   └── Transaction.php     cast tipe/tanggal, scope forMonth & ofType
+│   ├── User.php            role/deactivated_at casts, relationships, deactivate/activate
+│   ├── Wallet.php          user and transactions relationships
+│   ├── Category.php        type cast, relationships
+│   └── Transaction.php     type/date casts, forMonth and ofType scopes
 ├── Policies/
-│   ├── WalletPolicy.php      update/delete hanya pemilik
-│   ├── CategoryPolicy.php    idem
-│   └── TransactionPolicy.php idem (tanpa pengecualian admin)
-├── Providers/AppServiceProvider.php  preventLazyLoading, forceScheme https di produksi
+│   ├── WalletPolicy.php      update/delete for the owner only
+│   ├── CategoryPolicy.php    same
+│   └── TransactionPolicy.php same, with no admin exception
+├── Providers/AppServiceProvider.php  preventLazyLoading, forceScheme https in production
 └── Support/
-    ├── Money.php           satu-satunya formatter "Rp 1.250.000"
-    └── MonthlySummary.php  agregasi bulanan (sum + groupBy)
+    ├── Money.php           the only "Rp 1.250.000" formatter
+    └── MonthlySummary.php  monthly aggregation (sum plus groupBy)
 
-bootstrap/app.php        routing, alias middleware, trusted proxy, error handling
-config/                  konfigurasi; hanya MySQL dan driver sync yang tersisa
+bootstrap/app.php        routing, middleware aliases, trusted proxies, error handling
+config/                  configuration; only MySQL and the sync queue driver remain
 database/
-├── factories/           data uji untuk empat model
+├── factories/           test data for the four models
 ├── migrations/          users, sessions, cache, wallets, categories, transactions
-├── schema/catatku.sql   dump struktur + data demo (bisa diimpor sendiri)
-└── seeders/             1 admin, 2 user demo, 5 dompet, 16 kategori, 60 transaksi
+├── schema/catatku.sql   structure plus demo rows (importable on its own)
+└── seeders/             one admin, two demo users, 5 wallets, 16 categories, 60 transactions
 
-lang/id/                 pesan validasi dan pagination Bahasa Indonesia
-public/                  document root; build Vite masuk ke public/build
+lang/id/                 Indonesian validation and pagination messages
+public/                  document root; the Vite build lands in public/build
 resources/
-├── css/app.css          token desain: aksen teal, income/expense, font
-├── js/app.js            Alpine (menu pengguna, dialog konfirmasi)
-├── js/chart.js          Chart.js doughnut untuk pengeluaran per kategori
+├── css/app.css          design tokens: teal accent, income/expense, font
+├── js/app.js            Alpine (user menu, confirmation dialog)
+├── js/chart.js          Chart.js doughnut for expense per category
 └── views/
-    ├── components/      layout, table, td, tr, badge, input, select, button, dll.
+    ├── components/      layout, table, td, tr, badge, input, select, button, and so on
     ├── auth/            login, register
     ├── transactions/    index, create, edit, partials/form
     ├── wallets/         index, create, edit, partials/form
@@ -69,16 +69,16 @@ resources/
     ├── errors/          403, 404, 419, 429, 500
     └── dashboard.blade.php
 
-routes/web.php           semua rute web (29 rute)
-tests/Feature/           test fitur per resource, auth, keamanan, dashboard, admin
-docker/                  Dockerfile (dev + production), vhost Apache, init.sql MySQL
-docker-compose.yml       stack pengembangan (app + MySQL)
-docker-compose.production.yml  stack server (app production + MySQL)
-.github/workflows/deploy.yml   deploy otomatis lewat SSH
+routes/web.php           every web route (29 routes)
+tests/Feature/           feature tests per resource, auth, security, dashboard, admin
+docker/                  Dockerfile (dev plus production), Apache vhost, MySQL init script
+docker-compose.yml       development stack (app plus MySQL)
+docker-compose.production.yml  server stack (production app plus MySQL)
+.github/workflows/deploy.yml   automated deploy over SSH
 ```
 
-## Alur data satu halaman
+## Data flow of one page
 
-`routes/web.php` → middleware → `Controller` → `FormRequest` (validasi) → `Policy`
-(otorisasi) → `Model` (Eloquent) → `Blade view` → browser. Detailnya ada di
+`routes/web.php` → middleware → controller → FormRequest (validation) → policy (authorization)
+→ model (Eloquent) → Blade view → browser. The details are in
 [`architecture.md`](architecture.md).

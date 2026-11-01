@@ -1,87 +1,88 @@
-# Checklist submission
+# Submission checklist
 
-Rubrik → bukti, daftar screenshot yang harus diambil manual, dan kerangka PDF.
+Rubric row to evidence, the screenshots to take by hand, and the PDF outline.
 
-## 1. Rubrik → bukti
+## 1. Rubric to evidence
 
-| Komponen (bobot) | Bukti di repo / URL | Cara menunjukkan |
+| Component (weight) | Evidence in the repo / URL | How to show it |
 | --- | --- | --- |
-| Desain (15%) | `resources/css/app.css` (token), `resources/views/components/*`, `docs/features.md` | screenshot dashboard, daftar transaksi, form dengan error, tampilan 375px |
-| Implementasi + database (35%) | `app/`, `database/migrations/`, `database/schema/catatku.sql`, `docs/erd.md` | ERD, `php artisan migrate:fresh --seed`, screenshot CRUD |
-| Keamanan + sesi (15%) | `docs/security.md` (28 item → file → test), `tests/Feature/Security/` | tabel audit + output `php artisan test` |
-| Deployment (10%) | `docs/deployment.md`, `docker-compose.production.yml`, `.github/workflows/deploy.yml` | screenshot URL live, screenshot halaman Actions |
-| Video esai (25%) | `docs/essay-notes.md` | video, mengikuti poin per bagian |
+| Design (15%) | `resources/css/app.css` (tokens), `resources/views/components/*`, `docs/features.md` | screenshots of the dashboard, transaction list, a form with errors, and the 375px layout |
+| Implementation + database (35%) | `app/`, `database/migrations/`, `database/schema/catatku.sql`, `docs/erd.md` | ERD, `php artisan migrate:fresh --seed`, CRUD screenshots |
+| Security + session (15%) | `docs/security.md` (28 items to file to test), `tests/Feature/Security/` | the audit table plus the `php artisan test` output |
+| Deployment (10%) | `docs/deployment.md`, `docker-compose.production.yml`, `.github/workflows/deploy.yml` | screenshot of the live URL and of the Actions page |
+| Video essay (25%) | `docs/essay-notes.md` | the recording, following the points per section |
 
-## 2. Bukti per butir yang diminta dosen
+## 2. Evidence per required item
 
-| Butir | File |
+| Item | File |
 | --- | --- |
-| ERD | `docs/erd.md` (Mermaid, bisa dirender di GitHub) |
-| Flowchart / arsitektur | `docs/architecture.md` (Mermaid alur request + tabel routing) |
-| Struktur MVC | `docs/mvc-structure.md` |
-| Hak akses per peran | `docs/roles.md` |
-| Daftar fitur | `docs/features.md` |
-| CRUD + screenshot | lihat daftar screenshot di bawah |
-| Migrasi | `database/migrations/` (6 file) |
-| Penggunaan Eloquent | `app/Models/` + `app/Support/MonthlySummary.php` |
-| Validasi | `app/Http/Requests/` + `lang/id/validation.php` |
-| CSRF / XSS | `docs/security.md` baris 1–5 + `tests/Feature/Security/` |
-| Autentikasi | `app/Http/Controllers/Auth/`, `app/Http/Requests/Auth/` |
-| Role & policy | `app/Policies/`, `app/Http/Middleware/EnsureUserIsAdmin.php`, `docs/roles.md` |
-| URL live | _isi setelah Phase 10_ |
-| Langkah deployment | `docs/deployment.md` |
-| File `.sql` | `database/schema/catatku.sql` |
+| ERD | `docs/erd.md` (Mermaid, renders on GitHub) |
+| Flowchart / architecture | `docs/architecture.md` (Mermaid request flow plus the routing table) |
+| MVC structure | `docs/mvc-structure.md` |
+| Permissions per role | `docs/roles.md` |
+| Feature list | `docs/features.md` |
+| CRUD plus screenshots | see the screenshot list below |
+| Migrations | `database/migrations/` (6 files) |
+| Eloquent usage | `app/Models/` plus `app/Support/MonthlySummary.php` |
+| Validation | `app/Http/Requests/` plus `lang/id/validation.php` |
+| CSRF / XSS | rows 1-5 of `docs/security.md` plus `tests/Feature/Security/` |
+| Authentication | `app/Http/Controllers/Auth/`, `app/Http/Requests/Auth/` |
+| Roles and policies | `app/Policies/`, `app/Http/Middleware/EnsureUserIsAdmin.php`, `docs/roles.md` |
+| Live URL | _fill in after the first live deploy_ |
+| Deployment steps | `docs/deployment.md` |
+| The `.sql` file | `database/schema/catatku.sql` |
 
-## 3. Screenshot yang perlu kamu ambil
+## 3. Screenshots to capture
 
-Semua halaman bisa diakses setelah `docker compose up` di <http://localhost:8001>.
+Every page is reachable after `docker compose up` at <http://localhost:8001>.
 
-| # | Halaman | URL | Yang dibuktikan |
+| # | Page | URL | What it proves |
 | --- | --- | --- | --- |
-| 1 | Login | `/login` | form + pesan error saat salah kata sandi |
-| 2 | Register | `/register` | aturan kata sandi terlihat |
-| 3 | Dashboard | `/dashboard` | 3 kartu, grafik, saldo dompet, 5 transaksi |
-| 4 | Dashboard, bulan lain | `/dashboard?month=2026-08` | filter bulan bekerja |
-| 5 | Daftar transaksi | `/transactions` | tabel, filter, pagination, format rupiah |
-| 6 | Transaksi + filter | `/transactions?month=2026-10&type=expense` | filter bertahan di URL |
-| 7 | Form transaksi (error) | `/transactions/create` | pesan validasi tipe tidak cocok / nominal |
-| 8 | Hapus (dialog) | `/transactions` | modal konfirmasi |
-| 9 | Dompet | `/wallets` | daftar + jumlah transaksi |
-| 10 | Hapus dompet ditolak | `/wallets` | pesan "masih punya transaksi" |
-| 11 | Kategori | `/categories` | badge Pemasukan/Pengeluaran dengan ikon |
-| 12 | Admin | `/admin/users` | daftar akun, status, aksi |
-| 13 | Admin, akun nonaktif | `/admin/users` | status Nonaktif + tombol Aktifkan |
-| 14 | 404 | `/halaman-tidak-ada` | halaman error Indonesia |
-| 15 | 403 | login sebagai user lalu buka `/admin/users` | halaman 403 Indonesia |
-| 16 | 419 | submit login tanpa token (atau biarkan sesi kedaluwarsa) | halaman 419 |
-| 17 | Mobile 375px | `/dashboard` dengan lebar 375px | bottom navigation, kartu bertumpuk |
-| 18 | Struktur DB | `mysql` / GUI di `127.0.0.1:3307` | tabel + foreign key |
-| 19 | Test hijau | terminal `php artisan test` | 106 test lulus |
-| 20 | URL live | `https://<domain>/dashboard` | bukti deploy + HTTPS |
+| 1 | Login | `/login` | the form plus the error message for a wrong password |
+| 2 | Register | `/register` | the password rules are visible |
+| 3 | Dashboard | `/dashboard` | three cards, chart, wallet balances, 5 transactions |
+| 4 | Dashboard, another month | `/dashboard?month=2026-08` | the month filter works |
+| 5 | Transaction list | `/transactions` | table, filters, pagination, rupiah format |
+| 6 | Transactions with filters | `/transactions?month=2026-10&type=expense` | filters stay in the URL |
+| 7 | Transaction form with errors | `/transactions/create` | the type mismatch and amount messages |
+| 8 | Delete dialog | `/transactions` | the confirmation modal |
+| 9 | Wallets | `/wallets` | the list plus transaction counts |
+| 10 | Wallet delete refused | `/wallets` | the "still has transactions" message |
+| 11 | Categories | `/categories` | income/expense badges with icons |
+| 12 | Admin | `/admin/users` | account list, status, actions |
+| 13 | Admin, deactivated account | `/admin/users` | "Nonaktif" status plus the activate button |
+| 14 | 404 | `/halaman-tidak-ada` | the Indonesian error page |
+| 15 | 403 | log in as a user, open `/admin/users` | the Indonesian 403 page |
+| 16 | 419 | submit the login form without a token (or let the session expire) | the 419 page |
+| 17 | Mobile at 375px | `/dashboard` at 375px wide | bottom navigation, stacked cards |
+| 18 | Database structure | `mysql` or a GUI on `127.0.0.1:3307` | tables plus foreign keys |
+| 19 | Green tests | terminal running `php artisan test` | 106 tests passing |
+| 20 | Live URL | `https://<domain>/dashboard` | deployment plus HTTPS |
 
-Tips: ambil screenshot penuh (bukan potongan), tampilkan URL di address bar kalau memungkinkan,
-dan simpan dengan nama `01-login.png`, `02-register.png`, dst. supaya mudah disusun di PDF.
+Tip: take full screenshots rather than crops, show the URL in the address bar when possible, and
+name them `01-login.png`, `02-register.png` and so on so the PDF is easy to assemble.
 
-## 4. Kerangka PDF
+## 4. PDF outline
 
-1. **Identitas** — judul "Catatku — Aplikasi Pencatat Keuangan Pribadi", nama, NIM, kelas,
-   tautan repo dan URL live.
-2. **Deskripsi singkat** — masalah yang dipecahkan, 5 fitur utama, stack (Laravel 13, MySQL 8.4,
+1. **Identity** — title "Catatku — Aplikasi Pencatat Keuangan Pribadi", name, student number,
+   class, repository and live URL.
+2. **Short description** — the problem, the five main features, the stack (Laravel 13, MySQL 8.4,
    Blade/Tailwind/Alpine/Chart.js).
-3. **ERD** — gambar dari `docs/erd.md` + satu paragraf tentang relasi dan constraint.
-4. **Flowchart** — gambar dari `docs/architecture.md` + penjelasan satu alur request.
-5. **Struktur MVC** — ringkasan `docs/mvc-structure.md`.
-6. **Hak akses** — tabel dari `docs/roles.md`.
-7. **Daftar fitur** — tabel dari `docs/features.md` (boleh diringkas per modul).
-8. **Screenshot** — 10–12 gambar terpenting dari daftar di atas, masing-masing satu baris
-   keterangan "apa yang dibuktikan".
-9. **Keamanan** — ringkasan `docs/security.md`: CSRF, XSS, SQL injection, mass assignment,
-   auth, session, otorisasi; sebutkan test yang men proof.
-10. **Deployment** — langkah dari `docs/deployment.md` + screenshot URL live dan halaman
-    Actions.
-11. **Penutup** — kendala dan rencana pengembangan (misalnya reset kata sandi, ekspor CSV).
+3. **ERD** — the diagram from `docs/erd.md` plus one paragraph about relationships and
+   constraints.
+4. **Flowchart** — the diagram from `docs/architecture.md` plus one request explained.
+5. **MVC structure** — a summary of `docs/mvc-structure.md`.
+6. **Permissions** — the table from `docs/roles.md`.
+7. **Feature list** — the table from `docs/features.md` (per module is enough).
+8. **Screenshots** — the 10-12 most important ones from the list above, each with one line saying
+   what it proves.
+9. **Security** — a summary of `docs/security.md`: CSRF, XSS, SQL injection, mass assignment,
+   auth, session, authorization, naming the test that proves each one.
+10. **Deployment** — the steps from `docs/deployment.md` plus screenshots of the live URL and the
+    Actions page.
+11. **Closing** — obstacles faced and future work (password reset, CSV export).
 
-## 5. Sebelum mengumpulkan
+## 5. Before submitting
 
 ```bash
 docker compose exec app php artisan migrate:fresh --seed
@@ -91,9 +92,9 @@ docker compose exec app ./vendor/bin/phpstan analyse --memory-limit=512M
 npm run build
 ```
 
-- [ ] Semua perintah di atas hijau.
-- [ ] `database/schema/catatku.sql` sudah diperbarui kalau skema berubah
+- [ ] Every command above is green.
+- [ ] `database/schema/catatku.sql` is up to date if the schema changed
       (`mysqldump ... catatku migrations users wallets categories transactions`).
-- [ ] Tautan repo dan URL live diisi di README, PDF, dan formulir pengumpulan.
-- [ ] Video esai direkam mengikuti `docs/essay-notes.md`.
-- [ ] Tidak ada `.env`, `vendor/`, `node_modules/`, `public/build` yang ter-commit.
+- [ ] Repository and live URL are filled in the README, the PDF and the submission form.
+- [ ] The video essay is recorded following `docs/essay-notes.md`.
+- [ ] No `.env`, `vendor/`, `node_modules/` or `public/build` is committed.

@@ -1,71 +1,71 @@
-# Fitur
+# Features
 
-Daftar lengkap perilaku yang bisa dipakai, beserta tempat implementasinya. Tidak ada
-tombol atau menu yang mengarah ke halaman kosong.
+Every behaviour the app offers, and where it is implemented. No button or menu item leads to an
+empty page.
 
-## Autentikasi
+## Authentication
 
-| Fitur | Perilaku | Implementasi |
+| Feature | Behaviour | Implementation |
 | --- | --- | --- |
-| Registrasi | nama, email (disimpan lowercase), kata sandi min 8 karakter campuran huruf besar/kecil dan angka; langsung login | `Auth/RegisterController`, `Requests/Auth/RegisterRequest`, `views/auth/register` |
-| Login | email + kata sandi; email salah, kata sandi salah, dan akun nonaktif memberi pesan yang sama | `Requests/Auth/LoginRequest::authenticate` |
-| Logout | POST, sesi di-invalidate dan token CSRF dibuat ulang | `Auth/LogoutController` |
-| Batas percobaan | 5 percobaan login/menit, 6 registrasi/menit, halaman 429 | `routes/web.php:19,22`, `views/errors/429` |
-| Akun nonaktif | tidak bisa login; sesi yang masih hidup diputus pada request berikutnya | `LoginRequest`, `Middleware/EnsureUserIsActive` |
+| Registration | name, email (stored lowercase), password with at least 8 characters mixing upper and lower case and digits; logs in immediately | `Auth/RegisterController`, `Requests/Auth/RegisterRequest`, `views/auth/register` |
+| Login | email plus password; wrong email, wrong password and a deactivated account all give the same message | `Requests/Auth/LoginRequest::authenticate` |
+| Logout | POST, the session is invalidated and the CSRF token regenerated | `Auth/LogoutController` |
+| Attempt limit | 5 logins per minute, 6 registrations per minute, 429 page | `routes/web.php:19,22`, `views/errors/429` |
+| Deactivated account | cannot log in; a live session is cut on the next request | `LoginRequest`, `Middleware/EnsureUserIsActive` |
 
-## Dompet
+## Wallets
 
-| Fitur | Perilaku | Implementasi |
+| Feature | Behaviour | Implementation |
 | --- | --- | --- |
-| Daftar | hanya dompet sendiri, dengan jumlah transaksi per dompet | `WalletController@index` |
-| Tambah / ubah | nama wajib, maks 100, unik per pemilik | `Requests/WalletRequest` |
-| Hapus | ditolak dengan pesan jika masih punya transaksi | `WalletController@destroy` |
-| Kosong | empty state + tombol tambah | `views/wallets/index` |
+| List | own wallets only, with the transaction count per wallet | `WalletController@index` |
+| Create / update | name required, max 100, unique per owner | `Requests/WalletRequest` |
+| Delete | refused with a message while transactions still use it | `WalletController@destroy` |
+| Empty state | message plus an add button | `views/wallets/index` |
 
-## Kategori
+## Categories
 
-| Fitur | Perilaku | Implementasi |
+| Feature | Behaviour | Implementation |
 | --- | --- | --- |
-| Daftar | hanya kategori sendiri, badge tipe (ikon + teks, bukan warna saja) | `CategoryController@index` |
-| Tambah / ubah | nama unik per (pemilik, nama, tipe); tipe `income`/`expense` | `Requests/CategoryRequest` |
-| Hapus | ditolak jika masih dipakai transaksi | `CategoryController@destroy` |
+| List | own categories only, type badge (icon plus text, never colour alone) | `CategoryController@index` |
+| Create / update | name unique per (owner, name, type); type is `income` or `expense` | `Requests/CategoryRequest` |
+| Delete | refused while transactions still use it | `CategoryController@destroy` |
 
-## Transaksi
+## Transactions
 
-| Fitur | Perilaku | Implementasi |
+| Feature | Behaviour | Implementation |
 | --- | --- | --- |
-| Daftar | 15 baris per halaman, urut tanggal terbaru | `TransactionController@index` |
-| Filter | bulan (`Y-m`), tipe, kategori; nilai filter tetap ada saat pindah halaman | `TransactionFilterRequest`, `withQueryString()` |
-| Tambah / ubah | dompet dan kategori harus milik sendiri, nominal bulat, tanggal tidak melewati hari ini, catatan maks 255 | `Requests/TransactionRequest` |
-| Invarian tipe | tipe transaksi harus sama dengan tipe kategori | `TransactionRequest::after` |
-| Hapus | konfirmasi dialog, lalu hapus | `components/confirm-delete` |
-| Format uang | `Rp 1.250.000`, tanda +/- dan ikon panah | `Support/Money`, `components/amount` |
+| List | 15 rows per page, newest date first | `TransactionController@index` |
+| Filters | month (`Y-m`), type, category; filter values survive pagination | `TransactionFilterRequest`, `withQueryString()` |
+| Create / update | wallet and category must belong to the user, whole rupiah amount, date not in the future, note max 255 | `Requests/TransactionRequest` |
+| Type invariant | the transaction type must equal the category type | `TransactionRequest::after` |
+| Delete | confirmation dialog, then delete | `components/confirm-delete` |
+| Money format | `Rp 1.250.000`, with a +/- sign and an arrow icon | `Support/Money`, `components/amount` |
 
 ## Dashboard
 
-| Fitur | Perilaku | Implementasi |
+| Feature | Behaviour | Implementation |
 | --- | --- | --- |
-| Pemilih bulan | default bulan berjalan, bisa diganti lewat `?month=YYYY-MM` | `Requests/DashboardRequest` |
-| Tiga kartu | pemasukan, pengeluaran, saldo bulan terpilih | `Support/MonthlySummary` |
-| Grafik | doughnut pengeluaran per kategori, plus daftar angkanya | `resources/js/chart.js`, `views/dashboard` |
-| Saldo per dompet | total pemasukan - pengeluaran sepanjang waktu | `DashboardController::walletBalances` |
-| Transaksi terakhir | 5 baris terbaru | `DashboardController` |
+| Month picker | current month by default, switchable through `?month=YYYY-MM` | `Requests/DashboardRequest` |
+| Three cards | income, expense and balance for the selected month | `Support/MonthlySummary` |
+| Chart | doughnut of expense per category, plus a list of the numbers | `resources/js/chart.js`, `views/dashboard` |
+| Balance per wallet | total income minus expense over all time | `DashboardController::walletBalances` |
+| Latest transactions | the 5 newest rows | `DashboardController` |
 
 ## Admin
 
-| Fitur | Perilaku | Implementasi |
+| Feature | Behaviour | Implementation |
 | --- | --- | --- |
-| Daftar akun | nama, email, peran, jumlah transaksi, status | `Admin/UserController@index` |
-| Nonaktif / aktifkan | langsung berlaku; akun nonaktif tidak bisa login | `Admin/UserController` + `User::deactivate/activate` |
-| Hapus akun | menghapus transaksi dulu lalu akun (dompet & kategori ikut cascade) | `Admin/UserController@destroy` |
-| Proteksi | tidak bisa menonaktifkan/menghapus diri sendiri, tidak bisa menghilangkan admin aktif terakhir | `Admin/UserController` |
+| Account list | name, email, role, transaction count, status | `Admin/UserController@index` |
+| Deactivate / activate | effective immediately; a deactivated account cannot log in | `Admin/UserController` plus `User::deactivate/activate` |
+| Delete account | deletes the transactions first, then the account (wallets and categories cascade) | `Admin/UserController@destroy` |
+| Guards | cannot deactivate or delete itself, cannot remove the last active admin | `Admin/UserController` |
 
-## Lintas fitur
+## Cross-cutting
 
-| Fitur | Perilaku | Implementasi |
+| Feature | Behaviour | Implementation |
 | --- | --- | --- |
-| Pesan flash | sukses (hijau) dan gagal (merah) di satu komponen | `components/flash` |
-| Error page | 403, 404, 419, 429, 500 Bahasa Indonesia | `views/errors`, `components/error-page` |
-| Navigasi | sidebar desktop, bottom bar mobile, item aktif ditandai | `components/layouts/app` |
-| Validasi | pesan Bahasa Indonesia, error per field, input lama dipertahankan | `lang/id/validation.php`, `components/input` |
-| Data demo | 1 admin, 2 user, 5 dompet, 16 kategori, 60 transaksi Agustus-Oktober 2026 | `database/seeders` |
+| Flash messages | success (green) and failure (red) in one component | `components/flash` |
+| Error pages | 403, 404, 419, 429, 500 in Indonesian | `views/errors`, `components/error-page` |
+| Navigation | desktop sidebar, mobile bottom bar, active item marked | `components/layouts/app` |
+| Validation | Indonesian messages, one error per field, old input kept | `lang/id/validation.php`, `components/input` |
+| Demo data | 1 admin, 2 users, 5 wallets, 16 categories, 60 transactions from August to October 2026 | `database/seeders` |

@@ -315,6 +315,21 @@ jobs:
 
           echo "Deploying into $APP_PATH"
           cd "$APP_PATH"
+
+          # The stack reads .env, and MySQL refuses to start without a root password, so a
+          # half filled file would only show up as a two minute timeout. Check it first.
+          if [ ! -f .env ]; then
+            echo ".env is missing in $APP_PATH; copy .env.example and fill it in (docs/deployment.md section 3)" >&2
+            exit 1
+          fi
+          for key in APP_KEY APP_URL DB_DATABASE DB_USERNAME DB_PASSWORD DB_ROOT_PASSWORD; do
+            if ! grep -qE "^$key=[^\"']" .env; then
+              echo ".env has no value for $key (docs/deployment.md section 3)" >&2
+              exit 1
+            fi
+          done
+          echo ".env has a value for every required key"
+
           git fetch --prune origin main
           git reset --hard origin/main
 

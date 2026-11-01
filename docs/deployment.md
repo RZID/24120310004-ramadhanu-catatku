@@ -112,6 +112,9 @@ Everything else stays as it is in `.env.example`: `SESSION_DRIVER=database`,
 `DB_PORT=3306`.
 
 `.env` is untracked, so the deploy's `git reset --hard` never overwrites or deletes it.
+Every deploy re-checks that `APP_KEY`, `APP_URL`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`
+and `DB_ROOT_PASSWORD` hold a value, because MySQL refuses to start without the root password
+and the failure otherwise only appears as a two minute timeout.
 
 `APP_PATH` may be written as `~/catatku`: the remote scripts expand a leading `~` against the
 home of the user the runner logs in as, and print the resolved path before touching anything.
@@ -288,6 +291,8 @@ output, because the runner log needs authentication to read while the annotation
 | `Verify the SSH connection` fails with "APP_PATH does not exist" | the repository is not cloned yet, or the path is relative to a home other than the login user's | the message prints the resolved path; clone the repository there (§3) |
 | `Verify the SSH connection` fails with "docker ... not available" | the user is not in the `docker` group | `sudo usermod -aG docker <user>`, then log in again |
 | `Verify the SSH connection` fails with a handshake or a refused connection | the tunnel route points at the wrong host or port, or sshd is down | the route service must be `SSH` to `localhost:22` |
+| `Pull, rebuild and migrate` fails with `.env is missing` or `.env has no value for ...` | the server's `.env` is absent or half filled; MySQL cannot start without `DB_ROOT_PASSWORD` | copy `.env.example` to `.env` in `APP_PATH` and fill every required key (§3). The deploy checks `APP_KEY`, `APP_URL`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` and `DB_ROOT_PASSWORD` before touching the containers |
+| `db` logs `Database is uninitialized and password option is not specified` | `DB_ROOT_PASSWORD` is empty, so the MySQL entrypoint refuses to initialise | set it in `.env`; if a data volume already exists with a different password, remove that volume on purpose (`docker compose -f docker-compose.production.yml down -v`) |
 | `Pull, rebuild and migrate` cannot reach the database | wrong root password when the volume was created, or a port clash | `docker compose -f docker-compose.production.yml logs db` |
 | `Pull, rebuild and migrate` fails elsewhere | `APP_PATH` is wrong, the clone is missing, or the build failed | run `cd "$APP_PATH"` and `docker compose version` by hand on the server |
 | The workflow is green but the URL returns 404 | the container runs but the tunnel route does not point at it | check the `cloudflared` ingress, see §5 |

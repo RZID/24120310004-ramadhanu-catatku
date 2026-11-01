@@ -149,8 +149,9 @@ so nothing here has to be remembered from scratch.
 
 ## 12. Deployment and environment configuration
 
-- Production image: `docker/Dockerfile`, `production` target — single-process Apache, runs as
-  `www-data`, listens on `$PORT`.
+- Production image: `docker/Dockerfile`, `production` target — nginx on `$PORT` in front of
+  php-fpm on `127.0.0.1:9000`, both as `www-data`; `docker/entrypoint.sh` supervises them and
+  `docker/php-fpm.conf` keeps the injected environment visible (`clear_env = no`).
 - Secrets never enter the repository: `.env` is ignored by `.gitignore:7`, and `.env.example`
   lists every key with a placeholder.
 - Behind a TLS proxy: `bootstrap/app.php:21` (`trustProxies`) and

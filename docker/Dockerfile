@@ -27,26 +27,23 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-# ---- production: single-process Apache serving public/ as a non-root user
-FROM php:8.4-apache AS production
+# ---- production: nginx in front of php-fpm, both running as the non-root www-data user
+FROM php:8.4-fpm AS production
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends unzip \
+    && apt-get install -y --no-install-recommends nginx unzip \
     && rm -rf /var/lib/apt/lists/* \
     && docker-php-ext-install pdo_mysql \
-    && a2enmod rewrite \
-    && rm /etc/apache2/sites-available/000-default.conf
+    && rm -f /etc/nginx/sites-enabled/default
 
-COPY docker/apache-vhost.conf /etc/apache2/sites-available/000-default.conf
+COPY docker/nginx.conf /etc/nginx/nginx.conf.template
+COPY docker/php-fpm.conf /usr/local/etc/php-fpm.d/www.conf
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint
 
-# Railway injects $PORT; Apache expands ${PORT} from the environment at start-up.
+# The host injects $PORT; the entrypoint writes it into the nginx config.
 ENV PORT=8080
-
-RUN sed -ri 's/^Listen 80$/Listen ${PORT}/' /etc/apache2/ports.conf \
-    && mkdir -p /var/run/apache2 /var/lock/apache2 \
-    && chown -R www-data:www-data /var/run/apache2 /var/lock/apache2 /var/log/apache2
 
 WORKDIR /var/www/html
 
@@ -57,8 +54,11 @@ COPY . .
 COPY --from=assets /app/public/build ./public/build
 
 RUN composer dump-autoload --optimize --no-dev \
-    && chown -R www-data:www-data storage bootstrap/cache
+    && chown -R www-data:www-data storage bootstrap/cache \
+    && chmod +x /usr/local/bin/entrypoint
 
 USER www-data
 
 EXPOSE 8080
+
+ENTRYPOINT ["/usr/local/bin/entrypoint"]

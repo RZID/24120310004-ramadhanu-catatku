@@ -23,9 +23,17 @@ flowchart LR
 docker build -f docker/Dockerfile --target production -t catatku-prod .
 ```
 
-The image is `php:8.4-apache` with `mod_rewrite`, the Vite assets copied from the Node
-stage, `composer install --no-dev --optimize-autoloader`, and it runs as `www-data` on
-`$PORT` (default 8080).
+The image is `php:8.4-fpm` with `nginx` in front of it: nginx answers on `$PORT` (default
+8080) and forwards `.php` requests to php-fpm on `127.0.0.1:9000`. Both processes run as
+`www-data`, and `docker/entrypoint.sh` starts them, forwards `SIGTERM`, and exits the
+container when either one dies so a broken pool never sits behind a green health check.
+The Vite assets come from the Node stage and `composer install --no-dev
+--optimize-autoloader` runs at build time.
+
+`docker/entrypoint.sh` also keeps `compose run app php artisan ...` working: with an argument
+it `exec`s that command instead of starting the web server, which is how the deploy migrates.
+`docker/php-fpm.conf` sets `clear_env = no`, otherwise php-fpm wipes the environment and
+Laravel never sees `APP_KEY`, `DB_PASSWORD` and the rest.
 
 Run it against the local MySQL to prove it boots without the dev stack:
 
@@ -313,6 +321,9 @@ Run these against `https://catatku.<your-domain>` after the first deploy:
 | `config:cache` is not run at build time, so no `.env` values are baked into the image | Configuration is read from the injected environment at runtime |
 | A failing migration would take the old container down if it ran after `up -d` | The workflow migrates before `up -d` |
 | `podman-compose` keeps the old container after a rebuild on the dev machine | `docker compose up -d --build --force-recreate app` |
+| nginx as `www-data` refused to start: `mkdir() "/var/lib/nginx/uwsgi" failed (13: Permission denied)` | All five temp paths (`client_body`, `proxy`, `fastcgi`, `uwsgi`, `scgi`) are pointed at `/tmp` in `docker/nginx.conf` |
+| php-fpm would hide the injected environment from Laravel | `clear_env = no` in `docker/php-fpm.conf` |
+| The `migrate` step would start a web server instead of the command | `docker/entrypoint.sh` `exec`s its arguments when it gets any |
 
 ## 8. Subsequent deploys
 
@@ -344,36 +355,45 @@ podman exec catatku-final php artisan migrate --force
 podman exec catatku-final php artisan db:seed --force
 ```
 
-Result (real output, 31 October 2026):
+Result (real output, 1 November 2026, nginx + php-fpm image):
 
 ```text
-podman exec catatku-final id          -> uid=33(www-data) gid=33(www-data)
-GET  /up                              -> 200
-GET  /                                -> 302 https://localhost:8004/login
-GET  /login                            -> 200, contains name="_token"
-POST /login without a token            -> 419
-POST /login (budi@catatku.test)        -> 302 https://localhost:8004/dashboard
+docker exec catatku-nginx id              -> uid=33(www-data) gid=33(www-data)
+GET  /up                                  -> 200
+GET  /                                    -> 302 https://localhost/login
+GET  /login                               -> 200, 1 csrf field
+POST /login without a token               -> 419
+POST /login (budi@catatku.test)           -> 302 https://localhost/dashboard
    Set-Cookie: catatku-session=...; httponly; samesite=lax
-GET  /dashboard                        -> 200, Rp 9.500.000 / Rp 1.190.000 / Rp 8.310.000,
-                                          chart data attribute present, wallet balances
-GET  /transactions                     -> 200, "Halaman 1 dari 2"
-GET  /transactions?month=2026-08&type=income -> 200, only "Gaji bulan Agustus"
-GET  /wallets, /categories             -> 200, 200
-GET  /tidak-ada                        -> 404 "Halaman tidak ditemukan", no stack trace
-POST /transactions (valid)             -> 302, row created with user_id forced to the owner
-POST /transactions (type mismatch)     -> 302 back with the mismatch message
-admin GET /admin/users                 -> 200, "Akun kamu", "31 transaksi"
-budi  GET /admin/users                 -> 403
-POST /logout                           -> 302 https://localhost:8004/login
-GET  /dashboard after logout           -> 302
+GET  /dashboard?month=2026-10             -> 200, Rp 9.500.000 / Rp 1.190.000 / Rp 8.310.000,
+                                             chart data attribute present
+GET  /transactions                        -> 200, "Halaman 1 dari 2"
+GET  /transactions?month=2026-08&type=income -> 200
+GET  /wallets, /categories                -> 200, 200
+GET  /build/assets/app-*.css              -> 200, text/css (served by nginx, not PHP)
+GET  /tidak-ada                           -> 404, no stack trace
+POST /transactions (valid, 1250000)       -> 302, row count 60 -> 61
+POST /transactions (formatted 1.250.000)  -> 302 back to the form, rejected
+POST /transactions (future date)          -> 302 back to the form, rejected
+POST /transactions (income category as expense) -> 302 back to the form, rejected
+POST /transactions (another user's wallet)      -> 302 back to the form, rejected
+admin GET /admin/users                    -> 200
+budi  GET /admin/users                    -> 403
+POST /logout                              -> 302 https://localhost/login
+GET  /dashboard after logout              -> 302 https://localhost/login
+docker run --rm <image> php artisan --version -> Laravel Framework 13.39.0 (entrypoint passthrough)
+kill the php-fpm master                   -> container exits with code 1
 ```
+
+The dashboard was read with `?month=2026-10` because the seed data ends in October 2026 and
+the default month is the current one; with no rows the three cards correctly show `Rp 0`.
 
 `SESSION_SECURE_COOKIE` is `false` in this rehearsal because the container is reached over
 plain HTTP on localhost; with `true` the same cookie carries `secure` (verified in §1).
 
 The scratch database and container were removed afterwards:
-`DROP DATABASE catatku_prod`, `podman rm -f catatku-final`. The development database was not
-touched (`users=3`, `transactions=60` before and after).
+`DROP DATABASE catatku_nginx_prod`, `docker rm -f catatku-nginx-test`. The development
+database was not touched (`transactions=60` before and after).
 
 ### What is still unverified
 

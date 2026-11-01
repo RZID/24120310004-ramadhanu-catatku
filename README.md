@@ -105,7 +105,7 @@ app/            Models, controllers, form requests, policies, providers
 bootstrap/      Framework bootstrap and middleware registration (no Kernel.php)
 config/         Configuration, read from .env
 database/       Migrations, factories, seeders
-docker/         Dockerfile (dev + production targets), Apache vhost, MySQL init
+docker/         Dockerfile (dev + production), nginx/php-fpm config, MySQL init
 docs/           ERD, architecture, MVC structure, roles and deployment notes
 public/         Web root, built Vite assets
 resources/      Blade views, CSS, JavaScript

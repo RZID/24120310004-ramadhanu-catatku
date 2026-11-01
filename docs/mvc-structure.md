@@ -71,7 +71,7 @@ resources/
 
 routes/web.php           every web route (29 routes)
 tests/Feature/           feature tests per resource, auth, security, dashboard, admin
-docker/                  Dockerfile (dev plus production), Apache vhost, MySQL init script
+docker/                  Dockerfile (dev plus production), nginx and php-fpm config, MySQL init
 docker-compose.yml       development stack (app plus MySQL)
 docker-compose.production.yml  server stack (production app plus MySQL)
 .github/workflows/deploy.yml   automated deploy over SSH

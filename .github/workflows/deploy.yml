@@ -166,8 +166,8 @@ jobs:
               *"Host key verification failed"*)
                 reason="The server presented a different host key than on a previous run. Confirm the key really changed before deleting it from known_hosts."
                 ;;
-              *"is not on PATH"*)
-                reason="Logged in, but a required tool is not on the PATH of a non-interactive session. Install it or add its directory (for example /snap/bin or ~/.local/bin) to PATH in /etc/profile or ~/.profile; the deploy starts a login shell on purpose."
+              *"is not installed on the server"*)
+                reason="Logged in, but git or docker is missing. Install it for the whole system (a package or a symlink in /usr/local/bin), not only inside one interactive shell profile."
                 ;;
               *"docker: not found"* | *"command not found"* | *"not a docker command"*)
                 reason="Logged in, but docker or docker compose is not available to SSH_USER. Add the user to the docker group and open a new session."
@@ -206,11 +206,33 @@ jobs:
           output=$(ssh -o BatchMode=yes -o ConnectTimeout=30 "$SSH_HOST" "APP_PATH='$APP_PATH' sh -l -s" <<'CHECK' 2>&1
           set -eu
 
-          # ssh runs a non-interactive shell, so the PATH from /etc/profile and ~/.profile
-          # is missing and tools installed by snap or in ~/.local/bin are invisible.
-          # The script is started with `sh -l`; this adds the usual extra directories on
-          # top of whatever that login shell produced.
-          PATH="$HOME/.local/bin:$HOME/bin:/snap/bin:$PATH"
+          # ssh runs a non-interactive shell and the deploy user's interactive shell is
+          # often zsh or fish, so a POSIX login shell never sees its PATH. Look for the
+          # tools where they actually are, then put those directories on PATH.
+          find_tool() {
+            if command -v "$1" > /dev/null 2>&1; then
+              command -v "$1"
+              return 0
+            fi
+            for dir in /usr/bin /usr/local/bin /bin /snap/bin /opt/homebrew/bin \
+              "$HOME/.local/bin" "$HOME/bin" "$HOME/.nix-profile/bin"; do
+              if [ -x "$dir/$1" ]; then
+                printf '%s\n' "$dir/$1"
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          git_path=$(find_tool git) || {
+            echo "git is not installed on the server (searched PATH, /usr/bin, /usr/local/bin, /bin, /snap/bin, ~/.local/bin, ~/bin, ~/.nix-profile/bin)" >&2
+            exit 127
+          }
+          docker_path=$(find_tool docker) || {
+            echo "docker is not installed on the server (searched PATH, /usr/bin, /usr/local/bin, /bin, /snap/bin, ~/.local/bin, ~/bin, ~/.nix-profile/bin)" >&2
+            exit 127
+          }
+          PATH="$(dirname "$git_path"):$(dirname "$docker_path"):$PATH"
           export PATH
 
           # A leading ~ stays literal inside a quoted variable, and the secret is easy
@@ -221,13 +243,7 @@ jobs:
           esac
 
           echo "logged in as $(id -un) on $(hostname), APP_PATH is $APP_PATH"
-
-          for tool in git docker; do
-            if ! command -v "$tool" > /dev/null 2>&1; then
-              echo "$tool is not on PATH: $PATH" >&2
-              exit 127
-            fi
-          done
+          echo "using $git_path and $docker_path"
 
           cd "$APP_PATH"
           echo "clone at $(pwd) on branch $(git rev-parse --abbrev-ref HEAD)"
@@ -246,11 +262,33 @@ jobs:
           ssh -o BatchMode=yes "$SSH_HOST" "APP_PATH='$APP_PATH' sh -l -s" <<'REMOTE'
           set -eu
 
-          # ssh runs a non-interactive shell, so the PATH from /etc/profile and ~/.profile
-          # is missing and tools installed by snap or in ~/.local/bin are invisible.
-          # The script is started with `sh -l`; this adds the usual extra directories on
-          # top of whatever that login shell produced.
-          PATH="$HOME/.local/bin:$HOME/bin:/snap/bin:$PATH"
+          # ssh runs a non-interactive shell and the deploy user's interactive shell is
+          # often zsh or fish, so a POSIX login shell never sees its PATH. Look for the
+          # tools where they actually are, then put those directories on PATH.
+          find_tool() {
+            if command -v "$1" > /dev/null 2>&1; then
+              command -v "$1"
+              return 0
+            fi
+            for dir in /usr/bin /usr/local/bin /bin /snap/bin /opt/homebrew/bin \
+              "$HOME/.local/bin" "$HOME/bin" "$HOME/.nix-profile/bin"; do
+              if [ -x "$dir/$1" ]; then
+                printf '%s\n' "$dir/$1"
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          git_path=$(find_tool git) || {
+            echo "git is not installed on the server (searched PATH, /usr/bin, /usr/local/bin, /bin, /snap/bin, ~/.local/bin, ~/bin, ~/.nix-profile/bin)" >&2
+            exit 127
+          }
+          docker_path=$(find_tool docker) || {
+            echo "docker is not installed on the server (searched PATH, /usr/bin, /usr/local/bin, /bin, /snap/bin, ~/.local/bin, ~/bin, ~/.nix-profile/bin)" >&2
+            exit 127
+          }
+          PATH="$(dirname "$git_path"):$(dirname "$docker_path"):$PATH"
           export PATH
 
           # A leading ~ stays literal inside a quoted variable, and the secret is easy

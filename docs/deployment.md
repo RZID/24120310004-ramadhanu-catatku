@@ -138,6 +138,13 @@ Nothing else has to be configured in GitHub: the workflow does not use `GITHUB_T
 Actions permission changes are needed. Database passwords live in the server's `.env` (§3) and
 never become repository secrets.
 
+Secrets are write-only: the UI and the REST API return only the name and timestamps, never the
+value, because they are sealed with libsodium and decrypted only inside the runner. A value can
+therefore only be reused from another repository if you still hold the plaintext — the key file
+on your machine, or a freshly created Cloudflare token. Do not try to copy a secret by printing
+it from a workflow: log redaction is best effort, a transformed value is not redacted, and the
+value would then live in a build log.
+
 The workflow does, over SSH:
 
 0. verifies the login and `docker compose version` before touching anything

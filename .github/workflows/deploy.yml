@@ -230,6 +230,11 @@ jobs:
           docker_path=$(find_tool docker) || missing="$missing docker"
           if [ -n "$missing" ]; then
             echo "not installed on the server:$missing (searched PATH, /usr/bin, /usr/local/bin, /bin, /snap/bin, ~/.local/bin, ~/bin, ~/.nix-profile/bin)" >&2
+            echo "system: $(uname -srm 2>/dev/null || echo unknown)" >&2
+            if [ -r /etc/os-release ]; then
+              head -3 /etc/os-release >&2
+            fi
+            echo "PATH=$PATH" >&2
             exit 127
           fi
 
@@ -287,6 +292,11 @@ jobs:
           docker_path=$(find_tool docker) || missing="$missing docker"
           if [ -n "$missing" ]; then
             echo "not installed on the server:$missing (searched PATH, /usr/bin, /usr/local/bin, /bin, /snap/bin, ~/.local/bin, ~/bin, ~/.nix-profile/bin)" >&2
+            echo "system: $(uname -srm 2>/dev/null || echo unknown)" >&2
+            if [ -r /etc/os-release ]; then
+              head -3 /etc/os-release >&2
+            fi
+            echo "PATH=$PATH" >&2
             exit 127
           fi
 

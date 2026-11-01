@@ -265,7 +265,10 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           APP_PATH: ${{ secrets.APP_PATH }}
         run: |
-          ssh -o BatchMode=yes "$SSH_HOST" "APP_PATH='$APP_PATH' sh -l -s" <<'REMOTE'
+          # Same reason as the check step: the log needs authentication, the annotation does
+          # not, so a failing deploy has to describe itself.
+          set +e
+          output=$(ssh -o BatchMode=yes "$SSH_HOST" "APP_PATH='$APP_PATH' sh -l -s" <<'REMOTE' 2>&1
           set -eu
 
           # ssh runs a non-interactive shell and the deploy user's interactive shell is
@@ -350,3 +353,12 @@ jobs:
 
           $compose ps
           REMOTE
+          )
+          status=$?
+          set -e
+
+          printf '%s\n' "$output"
+          if [ "$status" -ne 0 ]; then
+            echo "::error::The remote deploy failed (exit $status). Output: $(printf '%s' "$output" | tr '\n' ' ' | tr -s ' ' | tail -c 900)"
+            exit 1
+          fi

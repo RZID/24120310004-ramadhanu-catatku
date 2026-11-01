@@ -154,6 +154,51 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           APP_PATH: ${{ secrets.APP_PATH }}
         run: |
+          # The runner log needs authentication to read, but the annotation is public, so
+          # every failure message carries the exit status and the tail of the output.
+          fail() {
+            local status="$1" output="$2" reason
+
+            case "$output" in
+              *"Permission denied"*)
+                reason="The server refused the deploy key. Compare the fingerprint printed by the previous step with 'ssh-keygen -lf ~/.ssh/authorized_keys' on the server: the public half of SSH_PRIVATE_KEY must be in that file for SSH_USER, with mode 600 on the file and 700 on ~/.ssh."
+                ;;
+              *"Host key verification failed"*)
+                reason="The server presented a different host key than on a previous run. Confirm the key really changed before deleting it from known_hosts."
+                ;;
+              *"docker: not found"* | *"command not found"* | *"not a docker command"*)
+                reason="Logged in, but docker or docker compose is not available to SSH_USER. Add the user to the docker group and open a new session."
+                ;;
+              *"not a git repository"*)
+                reason="APP_PATH exists but is not a clone of the repository. Clone it there (docs/deployment.md section 3)."
+                ;;
+              *"No such file or directory"*)
+                reason="APP_PATH does not exist on the server. Clone the repository there first (docs/deployment.md section 3)."
+                ;;
+              *"handshake"* | *"connection refused"* | *"Connection refused"* | *"connection reset"* | *"timed out"* | *"Connection closed"* | *"kex_exchange_identification"*)
+                reason="The tunnel accepted the token but SSH did not answer. Check that the published route points at the right host and port (localhost:22) and that sshd is running."
+                ;;
+              *"Could not resolve hostname"* | *"Name or service not known"*)
+                reason="SSH_HOST cannot be resolved. Check the tunnel hostname in the secret."
+                ;;
+              *)
+                reason="SSH login or the remote checks failed. See docs/deployment.md section 4c for the usual causes."
+                ;;
+            esac
+
+            printf '%s\n' "$output"
+            echo "::error::$reason (exit $status) Output: $(printf '%s' "$output" | tr '\n' ' ' | tr -s ' ' | tail -c 400)"
+            exit 1
+          }
+
+          # A one-shot command first: it proves the tunnel, the key and the login without
+          # involving stdin. The longer script below cannot be debugged if this fails.
+          set +e
+          probe=$(ssh -o BatchMode=yes -o ConnectTimeout=30 -o LogLevel=VERBOSE "$SSH_HOST" 'echo connected' 2>&1)
+          status=$?
+          set -e
+          [ "$status" -eq 0 ] || fail "$status" "$probe"
+
           set +e
           output=$(ssh -o BatchMode=yes -o ConnectTimeout=30 "$SSH_HOST" "APP_PATH='$APP_PATH' bash -s" <<'CHECK' 2>&1
           set -euo pipefail
@@ -166,43 +211,7 @@ jobs:
           )
           status=$?
           set -e
-
-          echo "$output"
-          [ "$status" -eq 0 ] && exit 0
-
-          # The runner log needs authentication to read, but the annotation is public, so
-          # the tail of the output goes into the message: it is the only diagnostic that
-          # reaches whoever debugs the deploy.
-          detail=$(printf '%s' "$output" | tr '\n' ' ' | tr -s ' ' | tail -c 400)
-
-          case "$output" in
-            *"Permission denied"*)
-              echo "::error::The server refused the deploy key. Compare the fingerprint printed by the previous step with 'ssh-keygen -lf ~/.ssh/authorized_keys' on the server: the public half of SSH_PRIVATE_KEY must be in that file for SSH_USER, with mode 600 on the file and 700 on ~/.ssh. Output: $detail"
-              ;;
-            *"Host key verification failed"*)
-              echo "::error::The server presented a different host key than on a previous run. Confirm the key really changed before deleting it from known_hosts. Output: $detail"
-              ;;
-            *"docker: not found"* | *"command not found"* | *"not a docker command"*)
-              echo "::error::Logged in, but docker or docker compose is not available to SSH_USER. Add the user to the docker group and open a new session. Output: $detail"
-              ;;
-            *"not a git repository"*)
-              echo "::error::APP_PATH exists but is not a clone of the repository. Clone it there (docs/deployment.md section 3). Output: $detail"
-              ;;
-            *"No such file or directory"*)
-              echo "::error::APP_PATH does not exist on the server. Clone the repository there first (docs/deployment.md section 3). Output: $detail"
-              ;;
-            *"handshake"* | *"connection refused"* | *"Connection refused"* | *"connection reset"* | *"timed out"* | *"Connection closed"* | *"kex_exchange_identification"*)
-              echo "::error::The tunnel accepted the token but SSH did not answer. Check that the published route points at the right host and port (localhost:22) and that sshd is running. Output: $detail"
-              ;;
-            *"Could not resolve hostname"* | *"Name or service not known"*)
-              echo "::error::SSH_HOST cannot be resolved. Check the tunnel hostname in the secret. Output: $detail"
-              ;;
-            *)
-              echo "::error::SSH login or the remote checks failed. See docs/deployment.md section 4c for the usual causes. Output: $detail"
-              ;;
-          esac
-
-          exit 1
+          [ "$status" -eq 0 ] || fail "$status" "$output"
 
       - name: Pull, rebuild and migrate
         env:

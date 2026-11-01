@@ -251,6 +251,11 @@ If the host does have a public IP and port 22 open, skip this section entirely: 
 
 ## 4c. Common workflow failures
 
+The `Verify the SSH connection` step first runs a one-line command (`echo connected`) and only
+then the longer script over stdin, so a broken tunnel, key or login is reported separately from
+a failing remote check. Every failure message also carries the exit status and the tail of the
+output, because the runner log needs authentication to read while the annotation does not.
+
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | `Check required secrets` fails with "is empty or missing" | a secret name is misspelled or the value is empty | recreate it with the exact name: `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY`, `APP_PATH` |

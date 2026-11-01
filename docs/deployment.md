@@ -107,11 +107,25 @@ Everything else stays as it is in `.env.example`: `SESSION_DRIVER=database`,
 First boot:
 
 ```bash
-docker compose -f docker-compose.production.yml build
-docker compose -f docker-compose.production.yml run --rm app php artisan migrate --force
-docker compose -f docker-compose.production.yml run --rm app php artisan db:seed --force
-docker compose -f docker-compose.production.yml up -d
+compose="docker compose -f docker-compose.production.yml"
+
+$compose build
+$compose up -d db
+
+# migrate fails with "Connection refused" if the database is still starting:
+# `compose run` does not honour the healthcheck condition on every implementation.
+until $compose exec -T db sh -c \
+  'mysqladmin ping --host=127.0.0.1 --user=root --password="$MYSQL_ROOT_PASSWORD"' >/dev/null 2>&1; do
+  sleep 2
+done
+
+$compose run --rm app php artisan migrate --force
+$compose run --rm app php artisan db:seed --force   # once only
+$compose up -d
 ```
+
+If the loop never ends, `$compose logs db` says why (a wrong `DB_ROOT_PASSWORD` is the usual
+cause: MySQL only applies it when the data volume is created).
 
 `db:seed --force` runs exactly once: the seeders are not idempotent and would duplicate
 the demo rows on every deploy, which is why the workflow never calls them.
@@ -147,14 +161,91 @@ value would then live in a build log.
 
 The workflow does, over SSH:
 
-0. verifies the login and `docker compose version` before touching anything
-1. `git fetch --prune origin main` + `git reset --hard origin/main`
-2. `docker compose -f docker-compose.production.yml build`
-3. `docker compose -f docker-compose.production.yml run --rm app php artisan migrate --force`
-4. `docker compose -f docker-compose.production.yml up -d --remove-orphans`
+0. checks the Access service token against the SSH hostname (a `302` means the policy is not
+   Service Auth, `401`/`403` means the token is not accepted)
+1. verifies the login, the clone and `docker compose version` before touching anything
+2. `git fetch --prune origin main` + `git reset --hard origin/main`
+3. `docker compose -f docker-compose.production.yml build`
+4. `docker compose -f docker-compose.production.yml up -d db` and waits for the healthcheck
+5. `docker compose -f docker-compose.production.yml run --rm app php artisan migrate --force`
+6. `docker compose -f docker-compose.production.yml up -d --remove-orphans`
 
 Migrations run with the new image while the previous container still serves traffic, so
-a failed migration leaves the running app untouched.
+a failed migration leaves the running app untouched. The workflow never seeds: run
+`db:seed --force` once by hand on a fresh database (§3).
+
+## 4b. SSH through Cloudflare Tunnel (no public IP)
+
+The runner sits on the public internet, so `ssh` to the server only works if port 22 is
+reachable. When the host has no public IP, publish SSH through the same tunnel and let
+`cloudflared` on the runner open the connection — the tunnel is outbound from the server, so
+no inbound port is ever opened.
+
+1. **Publish the SSH route.** Dashboard → **Networking** → **Tunnels** → your tunnel →
+   **Routes** → **Add route** → **Published application**. Pick your zone and the subdomain
+   `ssh`, then set the service to **SSH** with `localhost:22` (or `<server IP>:22` when the
+   tunnel runs on a different machine than the SSH server).
+2. **Protect it with Access.** Zero Trust → **Access** → **Applications** → add a
+   self-hosted application for `ssh.<domain>` with a policy whose action is **Service Auth**.
+   Without this, Access asks for a browser login that the runner cannot complete.
+3. **Create the token.** Zero Trust → **Access** → **Service credentials** → **Service
+   tokens** → **Create Service Token**. Copy the Client ID (`<32 hex>.access`) and the Client
+   Secret (shown once; `cfast_…` on new accounts, 64 hex on older ones).
+4. **Fill the secrets.** `SSH_HOST=ssh.<domain>`, `CF_ACCESS_CLIENT_ID`,
+   `CF_ACCESS_CLIENT_SECRET` — see the table in §4.
+
+The workflow then downloads `cloudflared` and writes this `~/.ssh/config` (mode 600):
+
+```text
+Host ssh.<domain>
+  User deploy
+  IdentityFile ~/.ssh/deploy_key
+  IdentitiesOnly yes
+  StrictHostKeyChecking accept-new
+  ProxyCommand ~/.local/bin/cloudflared access ssh --hostname %h --service-token-id <id> --service-token-secret <secret>
+```
+
+The token is passed as flags instead of `TUNNEL_SERVICE_TOKEN_ID` / `TUNNEL_SERVICE_TOKEN_SECRET`
+because `cloudflared access ssh` does not honour those variables on every version; the flags
+work everywhere. `StrictHostKeyChecking accept-new` pins the host key on the first connection
+and refuses a changed key afterwards. The runner is destroyed when the job ends, so the copy of
+the token on disk only lives for the duration of the deploy.
+
+Reproduce the exact same path from your laptop before trusting CI:
+
+```bash
+ssh -F ~/.ssh/config deploy@ssh.<domain> 'cd /srv/catatku && git log -1 --oneline'
+```
+
+with the `ProxyCommand` line above in your own `~/.ssh/config`, or directly:
+
+```bash
+cloudflared access ssh --hostname ssh.<domain> \
+  --service-token-id "$CF_ACCESS_CLIENT_ID" \
+  --service-token-secret "$CF_ACCESS_CLIENT_SECRET"
+```
+
+If the host does have a public IP and port 22 open, skip this section entirely: leave both
+`CF_*` secrets empty and the workflow falls back to `ssh-keyscan` plus a plain `ssh`.
+
+## 4c. Common workflow failures
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `Check required secrets` fails with "is empty or missing" | a secret name is misspelled or the value is empty | recreate it with the exact name: `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY`, `APP_PATH` |
+| `Check required secrets` fails on the key format | the private key was pasted partially (one line only) | paste the whole file, from `-----BEGIN` to `-----END ...-----` |
+| `Check required secrets` fails with `CF_ACCESS_CLIENT_ID is set but ...` | only one half of the token pair is set | fill in both, or clear both |
+| `Set up SSH` fails with "Cannot reach ... on port 22" | the host has no public IP | use §4b, then set `SSH_HOST` to the tunnel hostname |
+| `Check Cloudflare Access` fails with HTTP 302 | the Access policy is not **Service Auth** | set the policy action of the `ssh.<domain>` application to Service Auth and include the service token in that policy |
+| `Check Cloudflare Access` fails with HTTP 401/403 | the token is wrong, expired, revoked, or no policy covers it | rotate or recreate the token, then check the policy includes it |
+| `Check Cloudflare Access` fails with HTTP 000 | the hostname cannot be reached at all | check the published route and that `cloudflared` runs on the server |
+| `Verify the SSH connection` fails with "Permission denied" | the public key is not in `authorized_keys` | append the `.pub` of the keypair to `~/.ssh/authorized_keys` of `SSH_USER` |
+| `Verify the SSH connection` fails with "APP_PATH does not exist" | the repository is not cloned yet | clone it to that path (§3) |
+| `Verify the SSH connection` fails with "docker ... not available" | the user is not in the `docker` group | `sudo usermod -aG docker <user>`, then log in again |
+| `Verify the SSH connection` fails with a handshake or a refused connection | the tunnel route points at the wrong host or port, or sshd is down | the route service must be `SSH` to `localhost:22` |
+| `Pull, rebuild and migrate` cannot reach the database | wrong root password when the volume was created, or a port clash | `docker compose -f docker-compose.production.yml logs db` |
+| `Pull, rebuild and migrate` fails elsewhere | `APP_PATH` is wrong, the clone is missing, or the build failed | run `cd "$APP_PATH"` and `docker compose version` by hand on the server |
+| The workflow is green but the URL returns 404 | the container runs but the tunnel route does not point at it | check the `cloudflared` ingress, see §5 |
 
 ## 5. Cloudflare Tunnel
 
@@ -258,76 +349,64 @@ touched (`users=3`, `transactions=60` before and after).
 
 ### What is still unverified
 
-- The live host itself: DNS, Cloudflare Tunnel routing, the four Actions secrets, and the
+- The live host itself: DNS, Cloudflare Tunnel routing, the six Actions secrets, and the
   server's `.env`. These cannot be exercised without access.
 - Visual rendering in a browser (chart, 375px layout) and the screenshots in
   `docs/submission-checklist.md` §3.
 - The `v1.0.0` tag is intentionally **not** created yet: it should mark a commit that passed
   the live checklist, not a rehearsal.
 
-## 4b. SSH through Cloudflare Tunnel (no public IP)
+## 10. Rehearsal of the deploy script itself
 
-The runner sits on the public internet, so `ssh` to the server only works if port 22 is
-reachable. When the host has no public IP, publish SSH through the same tunnel and let
-`cloudflared` on the runner open the connection — the tunnel is outbound from the server, so
-no inbound port is ever opened.
+The HTTP checks in §9 exercise the image, not the workflow. The remote part of
+`.github/workflows/deploy.yml` was therefore extracted verbatim and executed against a copy of
+the repository (`/tmp/opencode/fakeserver`) with its own MySQL volume and `APP_PORT=8005`, to
+find ordering bugs before CI hits the real server.
 
-1. **Publish the SSH route.** Dashboard → **Networking** → **Tunnels** → your tunnel →
-   **Routes** → **Add route** → **Published application**. Pick your zone and the subdomain
-   `ssh`, then set the service to **SSH** with `localhost:22` (or `<server IP>:22` when the
-   tunnel runs on a different machine than the SSH server).
-2. **Protect it with Access.** Zero Trust → **Access** → **Applications** → add a
-   self-hosted application for `ssh.<domain>` with a policy whose action is **Service Auth**.
-   Without this, Access asks for a browser login that the runner cannot complete.
-3. **Create the token.** Zero Trust → **Access** → **Service credentials** → **Service
-   tokens** → **Create Service Token**. Copy the Client ID (`<32 hex>.access`) and the Client
-   Secret (shown once; `cfast_…` on new accounts, 64 hex on older ones).
-4. **Fill the secrets.** `SSH_HOST=ssh.<domain>`, `CF_ACCESS_CLIENT_ID`,
-   `CF_ACCESS_CLIENT_SECRET` — see the table in §4.
+```bash
+# the heredoc body of the "Pull, rebuild and migrate" step, run locally
+APP_PATH=/tmp/opencode/fakeserver bash /tmp/opencode/remote-body.sh
+```
 
-The workflow then downloads `cloudflared` and writes this `~/.ssh/config` (mode 600):
+Real output (1 November 2026), with build lines removed:
 
 ```text
-Host ssh.<domain>
-  User deploy
-  IdentityFile ~/.ssh/deploy_key
-  IdentitiesOnly yes
-  StrictHostKeyChecking accept-new
-  ProxyCommand ~/.local/bin/cloudflared access ssh --hostname %h --service-token-id <id> --service-token-secret <secret>
+Successfully tagged localhost/catatku-app:production
+INFO  Preparing database.
+INFO  Running migrations.
+  0001_01_01_000000_create_users_table .............. 52.61ms DONE
+  0001_01_01_000001_create_cache_table .............. 94.69ms DONE
+  0001_01_01_000002_create_sessions_table ........... 59.43ms DONE
+  2026_10_31_000001_create_wallets_table ............ 111.69ms DONE
+  2026_10_31_000002_create_categories_table ......... 125.87ms DONE
+  2026_10_31_000003_create_transactions_table ....... 384.79ms DONE
+CONTAINER ID  IMAGE                             STATUS                       PORTS
+0b3805055daf  docker.io/library/mysql:8.4       Up (healthy)                 3306/tcp, 33060/tcp
+32d79b260894  localhost/catatku-app:production  Up                           0.0.0.0:8005->8080/tcp
+EXIT=0
+--- .env ---
+1129 .env
+GET /up -> 200
+GET /login -> 200
 ```
 
-The token is passed as flags instead of `TUNNEL_SERVICE_TOKEN_ID` / `TUNNEL_SERVICE_TOKEN_SECRET`
-because `cloudflared access ssh` does not honour those variables on every version; the flags
-work everywhere. `StrictHostKeyChecking accept-new` pins the host key on the first connection
-and refuses a changed key afterwards. The runner is destroyed when the job ends, so the copy of
-the token on disk only lives for the duration of the deploy.
+What the rehearsal proved, beyond "it runs":
 
-Reproduce the exact same path from your laptop before trusting CI:
+| Check | Result |
+| --- | --- |
+| `git reset --hard origin/main` keeps the untracked `.env` | the 1129-byte file survived and the app booted with it |
+| The database wait works on a cold volume | `migrate` ran only after `mysqladmin ping` succeeded; before the fix the same script died with `SQLSTATE[HY000] [2002] Connection refused` |
+| `compose run --rm app migrate` runs the new image | all 6 migrations executed inside the throwaway container, before the app was restarted |
+| `compose up -d --remove-orphans` leaves a working pair | `db` healthy, `app` serving, `/up` and `/login` both `200` |
+| The script is valid shell before CI ever runs it | `bash -n` clean on every step body |
 
-```bash
-ssh -F ~/.ssh/config deploy@ssh.<domain> 'cd /srv/catatku && git log -1 --oneline'
-```
+Two portability problems were found and fixed this way:
 
-with the `ProxyCommand` line above in your own `~/.ssh/config`, or directly:
+1. `compose run` ignored `depends_on: service_healthy`, so migrations raced MySQL. The step now
+   starts `db` explicitly and polls `mysqladmin ping` for up to 120 seconds.
+2. `$(compose ps -q db)` plus `docker inspect` was rejected by `podman-compose`
+   (`unrecognized arguments: db`). The ping loop avoids that call entirely, so the same script
+   works with both Compose implementations.
 
-```bash
-cloudflared access ssh --hostname ssh.<domain> \
-  --service-token-id "$CF_ACCESS_CLIENT_ID" \
-  --service-token-secret "$CF_ACCESS_CLIENT_SECRET"
-```
-
-If the host does have a public IP and port 22 open, skip this section entirely: leave both
-`CF_*` secrets empty and the workflow falls back to `ssh-keyscan` plus a plain `ssh`.
-
-## 4c. Kegagalan workflow yang umum
-
-| Gejala | Penyebab | Perbaikan |
-| --- | --- | --- |
-| Gagal di `Check required secrets`, pesan "is empty or missing" | nama secret salah atau nilainya kosong | buat ulang dengan nama persis: `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY`, `APP_PATH` |
-| Gagal di `Check required secrets`, pesan format key | private key ditempel sebagian (hanya satu baris) | tempel seluruh isi file, dari `-----BEGIN` sampai `-----END ...-----` |
-| Gagal di `Check required secrets`, pesan `CF_ACCESS_CLIENT_ID is set but ...` | hanya satu dari pasangan token yang diisi | isi keduanya, atau kosongkan keduanya |
-| Gagal di `Set up SSH`, pesan "Cannot reach ... on port 22" | host tidak punya IP publik | pakai §4b, lalu isi `SSH_HOST` dengan hostname tunnel |
-| Gagal di `Set up SSH` saat `cloudflared`/`access ssh` | policy Access bukan **Service Auth**, token kedaluwarsa atau dicabut, atau hostname salah | periksa Access → Applications → policy, lalu buat token baru |
-| Gagal di `Verify the SSH connection` | key tidak masuk `authorized_keys`, user salah, atau `docker compose` tidak bisa dijalankan user itu | uji `ssh deploy@host 'docker compose version'` manual; tambahkan user ke grup `docker` |
-| Gagal di `Pull, rebuild and migrate` | `APP_PATH` salah, repo belum di-clone, atau build gagal | cek `cd "$APP_PATH"` manual di server dan `docker compose version` |
-| Workflow hijau tapi URL 404 | container jalan tapi rute tunnel belum diarahkan | cek ingress `cloudflared`, lihat §5 |
+The rehearsal stack was stopped with `docker compose -f docker-compose.production.yml down`
+(no `-v`), so the test volume is still there for a repeat run.

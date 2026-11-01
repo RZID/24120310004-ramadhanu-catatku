@@ -224,14 +224,15 @@ jobs:
             return 1
           }
 
-          git_path=$(find_tool git) || {
-            echo "git is not installed on the server (searched PATH, /usr/bin, /usr/local/bin, /bin, /snap/bin, ~/.local/bin, ~/bin, ~/.nix-profile/bin)" >&2
+          # Report every missing tool at once, so one run is enough to fix the server.
+          missing=""
+          git_path=$(find_tool git) || missing="$missing git"
+          docker_path=$(find_tool docker) || missing="$missing docker"
+          if [ -n "$missing" ]; then
+            echo "not installed on the server:$missing (searched PATH, /usr/bin, /usr/local/bin, /bin, /snap/bin, ~/.local/bin, ~/bin, ~/.nix-profile/bin)" >&2
             exit 127
-          }
-          docker_path=$(find_tool docker) || {
-            echo "docker is not installed on the server (searched PATH, /usr/bin, /usr/local/bin, /bin, /snap/bin, ~/.local/bin, ~/bin, ~/.nix-profile/bin)" >&2
-            exit 127
-          }
+          fi
+
           PATH="$(dirname "$git_path"):$(dirname "$docker_path"):$PATH"
           export PATH
 
@@ -280,14 +281,15 @@ jobs:
             return 1
           }
 
-          git_path=$(find_tool git) || {
-            echo "git is not installed on the server (searched PATH, /usr/bin, /usr/local/bin, /bin, /snap/bin, ~/.local/bin, ~/bin, ~/.nix-profile/bin)" >&2
+          # Report every missing tool at once, so one run is enough to fix the server.
+          missing=""
+          git_path=$(find_tool git) || missing="$missing git"
+          docker_path=$(find_tool docker) || missing="$missing docker"
+          if [ -n "$missing" ]; then
+            echo "not installed on the server:$missing (searched PATH, /usr/bin, /usr/local/bin, /bin, /snap/bin, ~/.local/bin, ~/bin, ~/.nix-profile/bin)" >&2
             exit 127
-          }
-          docker_path=$(find_tool docker) || {
-            echo "docker is not installed on the server (searched PATH, /usr/bin, /usr/local/bin, /bin, /snap/bin, ~/.local/bin, ~/bin, ~/.nix-profile/bin)" >&2
-            exit 127
-          }
+          fi
+
           PATH="$(dirname "$git_path"):$(dirname "$docker_path"):$PATH"
           export PATH
 

@@ -104,7 +104,8 @@ Edit `.env` on the server. These values differ from development:
 | `SESSION_SECURE_COOKIE` | `true` |
 | `DB_HOST` | `db` |
 | `DB_DATABASE` / `DB_USERNAME` | database name and user for this server (keep the example values if you like) |
-| `DB_PASSWORD` / `DB_ROOT_PASSWORD` | real secrets, not the example values |
+| `DB_HOST` | address of the database server, e.g. `10.10.0.50`. There is no database container in this stack, so `db`, `localhost` and `127.0.0.1` are refused |
+| `DB_PASSWORD` | the password created on the database server (§3b) |
 | `APP_PORT` | host port for the app container, default `8080`; set `127.0.0.1:8080` when `cloudflared` runs on the same host |
 
 Everything else stays as it is in `.env.example`: `SESSION_DRIVER=database`,
@@ -112,9 +113,9 @@ Everything else stays as it is in `.env.example`: `SESSION_DRIVER=database`,
 `DB_PORT=3306`.
 
 `.env` is untracked, so the deploy's `git reset --hard` never overwrites or deletes it.
-Every deploy re-checks that `APP_KEY`, `APP_URL`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`
-and `DB_ROOT_PASSWORD` hold a value, because MySQL refuses to start without the root password
-and the failure otherwise only appears as a two minute timeout.
+Every deploy re-checks that `APP_KEY`, `APP_URL`, `DB_HOST`, `DB_DATABASE`, `DB_USERNAME` and
+`DB_PASSWORD` hold a value, and refuses a loopback or `db` host: the database is never a
+container on this machine.
 
 `APP_PATH` may be written as `~/catatku`: the remote scripts expand a leading `~` against the
 home of the user the runner logs in as, and print the resolved path before touching anything.
@@ -143,98 +144,71 @@ The workflow prints the fingerprint of the key it received before it connects, s
 numbers can be compared in one glance. A mismatch is the single most common reason for a
 `Permission denied (publickey)` on the first run.
 
-First boot:
+First boot (the database already exists on the other machine, see §3b):
 
 ```bash
 compose="docker compose -f docker-compose.production.yml"
 
 $compose build
-$compose up -d db
-
-# migrate fails with "Connection refused" if the database is still starting:
-# `compose run` does not honour the healthcheck condition on every implementation.
-until $compose exec -T db sh -c \
-  'mysqladmin ping --host=127.0.0.1 --user=root --password="$MYSQL_ROOT_PASSWORD"' >/dev/null 2>&1; do
-  sleep 2
-done
-
-$compose run --rm app php artisan migrate --force
-$compose run --rm app php artisan db:seed --force   # once only
+$compose run --rm --no-deps app php artisan migrate --force
+$compose run --rm --no-deps app php artisan db:seed --force   # once only
 $compose up -d
+$compose ps
 ```
 
-If the loop never ends, `$compose logs db` says why (a wrong `DB_ROOT_PASSWORD` is the usual
-cause: MySQL only applies it when the data volume is created).
+Migrations run while the previous container keeps serving traffic, and the app is only
+swapped over afterwards. `db:seed --force` runs exactly once: the seeders are not idempotent
+and would duplicate the demo rows on every deploy, which is why the workflow never calls them.
 
 `db:seed --force` runs exactly once: the seeders are not idempotent and would duplicate
 the demo rows on every deploy, which is why the workflow never calls them.
 
-## 3b. External database (MySQL on another machine)
+## 3b. The database server
 
-The compose file ships a MySQL container, but it is optional: `db` sits behind the
-`bundled-db` profile. When `DB_HOST` in the server `.env` is anything other than `db`, the
-deploy never creates that container — it builds the app, checks the external database with the
-app image, migrates, and starts the app alone. That keeps the database off the app server.
+`docker-compose.production.yml` defines the app only. The database is always a separate
+machine, so nothing the deploy runs can start a container that stores your data.
 
 On the database server:
 
 ```sql
 CREATE DATABASE catatku CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'catatku'@'10.10.0.%' IDENTIFIED BY 'the-password';
-GRANT ALL PRIVILEGES ON catatku.* TO 'catatku'@'10.10.0.%';
+CREATE USER 'catatku'@'10.10.0.30' IDENTIFIED BY 'the-password';
+GRANT ALL PRIVILEGES ON catatku.* TO 'catatku'@'10.10.0.30';
 FLUSH PRIVILEGES;
 ```
 
-`GRANT ALL` on that one schema is deliberate: the deploy runs `migrate`, which needs DDL.
+- `10.10.0.30` is the app server, so only that host may connect.
+- `utf8mb4` / `utf8mb4_unicode_ci` match `config/database.php:23-24`; a different collation
+  breaks migrations that add unique or foreign keys.
+- `GRANT ALL` on that one schema is deliberate: `migrate` needs DDL.
 
-Then make MySQL listen on the private interface and allow only the app host:
+Make MySQL listen on the private interface and let only the app host in:
 
 ```ini
-# /etc/mysql/mysql.conf.d/mysqld.cnf on the database server
+# /etc/mysql/mysql.conf.d/mysqld.cnf  (MariaDB: /etc/mysql/mariadb.conf.d/50-server.cnf)
 bind-address = 10.10.0.50
 ```
 
 ```bash
 sudo ufw allow from 10.10.0.30 to any port 3306 proto tcp
+# firewalld: --add-rich-rule='rule family=ipv4 source address=10.10.0.30 port port=3306 protocol=tcp accept'
 ```
 
-In the app server's `.env`, replace the database block:
+If MySQL itself runs in a container there, publish it on the private address only:
+`-p 10.10.0.50:3306:3306`.
 
-```bash
-DB_HOST=10.10.0.50
-DB_PORT=3306
-DB_DATABASE=catatku
-DB_USERNAME=catatku
-DB_PASSWORD=the-password
-```
-
-`DB_ROOT_PASSWORD` is only read by the bundled container, so leave it out. The deploy guard
-knows the difference: it requires `DB_HOST`, `DB_DATABASE`, `DB_USERNAME` and `DB_PASSWORD`
-always, and `DB_ROOT_PASSWORD` only when `DB_HOST=db`.
-
-Check it before pushing:
+Prove the path from the app server before touching the deploy:
 
 ```bash
 cd ~/catatku
 docker compose -f docker-compose.production.yml run --rm --no-deps app php -r \
   'new PDO("mysql:host=" . getenv("DB_HOST") . ";port=" . (getenv("DB_PORT") ?: "3306") . ";dbname=" . getenv("DB_DATABASE"), getenv("DB_USERNAME"), getenv("DB_PASSWORD")); echo "connected", PHP_EOL;'
-docker compose -f docker-compose.production.yml up -d          # app only, no db container
-docker compose -f docker-compose.production.yml ps
 ```
 
-That plaintext connection is acceptable over a private `10.x` network. For a database reached
-across the internet, terminate TLS on the database server and give the app
-`MYSQL_ATTR_SSL_CA`, which `config/database.php` already reads.
+That is the same check the deploy runs, with the same image and the same `.env`.
 
-Going back to the bundled database is one line: `DB_HOST=db`, plus a `DB_ROOT_PASSWORD`, and
-the deploy starts the container again. While `DB_HOST=db` the deploy keeps `--profile
-bundled-db` on every compose call, so `up -d --remove-orphans` never mistakes the running
-database container for an orphan.
-
-Switching the other way (bundled to external) does remove that container on the next deploy,
-and the data goes with it: dump before you switch with
-`docker compose -f docker-compose.production.yml exec -T db mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --databases catatku > catatku-backup.sql`,
-import it on the database server, and only then edit `DB_HOST`.
+A plaintext connection is fine over a private `10.x` network. Across the internet, terminate
+TLS on the database server and set `MYSQL_ATTR_SSL_CA`, which `config/database.php:30` reads.
 
 ## 4. GitHub Actions secrets
 
@@ -272,7 +246,8 @@ The workflow does, over SSH:
 1. verifies the login, the clone and `docker compose version` before touching anything
 2. `git fetch --prune origin main` + `git reset --hard origin/main`
 3. `docker compose -f docker-compose.production.yml build`
-4. `docker compose -f docker-compose.production.yml up -d db` and waits for the healthcheck
+4. refuses `DB_HOST` values that point at this machine, then polls a PDO connection to the
+   database server with the app image
 5. `docker compose -f docker-compose.production.yml run --rm app php artisan migrate --force`
 6. `docker compose -f docker-compose.production.yml up -d --remove-orphans`
 
@@ -358,8 +333,8 @@ output, because the runner log needs authentication to read while the annotation
 | `Verify the SSH connection` fails with "APP_PATH does not exist" | the repository is not cloned yet, or the path is relative to a home other than the login user's | the message prints the resolved path; clone the repository there (§3) |
 | `Verify the SSH connection` fails with "docker ... not available" | the user is not in the `docker` group | `sudo usermod -aG docker <user>`, then log in again |
 | `Verify the SSH connection` fails with a handshake or a refused connection | the tunnel route points at the wrong host or port, or sshd is down | the route service must be `SSH` to `localhost:22` |
-| `Pull, rebuild and migrate` fails with `.env is missing` or `.env has no value for ...` | the server's `.env` is absent or half filled; MySQL cannot start without `DB_ROOT_PASSWORD` | copy `.env.example` to `.env` in `APP_PATH` and fill every required key (§3). The deploy checks `APP_KEY`, `APP_URL`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` and `DB_ROOT_PASSWORD` before touching the containers |
-| `db` logs `Database is uninitialized and password option is not specified` | `DB_ROOT_PASSWORD` is empty, so the MySQL entrypoint refuses to initialise | set it in `.env`; if a data volume already exists with a different password, remove that volume on purpose (`docker compose -f docker-compose.production.yml down -v`) |
+| `Pull, rebuild and migrate` fails with `.env is missing` or `.env has no value for ...` | the server's `.env` is absent or half filled | copy `.env.example` to `.env` in `APP_PATH` and fill every required key (§3) |
+| `Pull, rebuild and migrate` fails with `DB_HOST must point at the database server` | `.env` still says `db`, `localhost` or `127.0.0.1`, or a second `DB_HOST` line sits above the real one | `grep -n DB_HOST .env` and keep exactly one line, pointing at the database machine |
 | `Pull, rebuild and migrate` cannot reach the database | wrong root password when the volume was created, or a port clash | `docker compose -f docker-compose.production.yml logs db` |
 | `Pull, rebuild and migrate` prints `The external database at ... did not answer` | `DB_HOST` is not `db`, but that machine refuses the connection or the credentials | check the `bind-address`, the firewall on port 3306, the `GRANT` host pattern, and `DB_PASSWORD` (§3b) |
 | `Pull, rebuild and migrate` fails elsewhere | `APP_PATH` is wrong, the clone is missing, or the build failed | run `cd "$APP_PATH"` and `docker compose version` by hand on the server |
@@ -376,7 +351,7 @@ host at all and must never be published or routed to.
 | 8080 | nginx in the `app` container | `APP_PORT` in `docker-compose.production.yml` | yes, `https` → `http://localhost:8080` |
 | 9000 | php-fpm, `127.0.0.1` inside `app` | nothing | **no**, and it would be an RCE risk |
 | 22 | sshd on the host | the SSH route only | yes, `ssh` → `localhost:22` |
-| 3306 | MySQL: either the bundled `db` container (not published) or the external database host | nothing | only on the database server's firewall, for the app host |
+| 3306 | MySQL on the **database server**, never on the app host | nothing here | only in that server's firewall, for the app host |
 
 Point a public hostname at the app port, for example in `~/.cloudflared/config.yml`:
 

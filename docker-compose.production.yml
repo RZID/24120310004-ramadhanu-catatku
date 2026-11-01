@@ -1,5 +1,6 @@
 # Production stack for the home server: the app image built from the `production`
-# target, plus an optional MySQL container for a self-contained deploy.
+# target only. The database lives on another machine, so there is deliberately no
+# database container here: nothing in this file can start MySQL.
 # Configuration comes from the .env file next to this file.
 services:
   app:
@@ -14,30 +15,3 @@ services:
       # Cloudflare Tunnel reaches the app on this port; keep it off the public
       # internet with the host firewall and let the tunnel be the only entry point.
       - "${APP_PORT:-8080}:8080"
-    # No depends_on: the database may live on another machine, and the deploy
-    # script waits for it before this container is started.
-
-  # Only for a self-contained deploy (DB_HOST=db):
-  #   docker compose -f docker-compose.production.yml --profile bundled-db up -d
-  # With an external database this service is never created.
-  db:
-    profiles: ["bundled-db"]
-    image: mysql:8.4
-    restart: unless-stopped
-    environment:
-      # Values are interpolated from .env, not injected wholesale: the database has
-      # no business seeing APP_KEY.
-      MYSQL_DATABASE: ${DB_DATABASE:-catatku}
-      MYSQL_USER: ${DB_USERNAME:-catatku}
-      MYSQL_PASSWORD: ${DB_PASSWORD:-}
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-}
-    volumes:
-      - db-data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "--host=127.0.0.1", "--user=root", "--password=$$MYSQL_ROOT_PASSWORD"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-
-volumes:
-  db-data:

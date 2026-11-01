@@ -178,8 +178,9 @@ so nothing here has to be remembered from scratch.
   (`app/Models/Category.php:15`).
 - **`compose run` does not wait for MySQL.** The deploy step ran `migrate` right after `build`
   and hit `Connection refused`, because `depends_on: service_healthy` is not honoured by
-  `compose run` on every implementation. Fix: start `db` explicitly and poll `mysqladmin ping`
-  before migrating (`.github/workflows/deploy.yml`, deploy step).
+  `compose run` on every implementation. Fix: poll a real PDO connection from the app image
+  before migrating, which also proves the credentials and works for a database on another
+  machine (`.github/workflows/deploy.yml`, deploy step).
 - **A CI step that failed with no message.** The deploy step printed only
   `Warning: Permanently added '...' to the list of known hosts.` and exited non-zero. The
   runner log needs authentication to read, but the annotation does not, so the step was changed

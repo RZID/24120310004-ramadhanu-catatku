@@ -203,7 +203,14 @@ jobs:
           output=$(ssh -o BatchMode=yes -o ConnectTimeout=30 "$SSH_HOST" "APP_PATH='$APP_PATH' sh -s" <<'CHECK' 2>&1
           set -eu
 
-          echo "logged in as $(id -un) on $(hostname)"
+          # A leading ~ stays literal inside a quoted variable, and the secret is easy
+          # to write as ~/catatku, so expand it against the login user's home here.
+          case "$APP_PATH" in
+            "~") APP_PATH="$HOME" ;;
+            "~/"*) APP_PATH="$HOME/${APP_PATH#\~/}" ;;
+          esac
+
+          echo "logged in as $(id -un) on $(hostname), APP_PATH is $APP_PATH"
           cd "$APP_PATH"
           echo "clone at $(pwd) on branch $(git rev-parse --abbrev-ref HEAD)"
           docker compose version
@@ -221,6 +228,14 @@ jobs:
           ssh -o BatchMode=yes "$SSH_HOST" "APP_PATH='$APP_PATH' sh -s" <<'REMOTE'
           set -eu
 
+          # A leading ~ stays literal inside a quoted variable, and the secret is easy
+          # to write as ~/catatku, so expand it against the login user's home here.
+          case "$APP_PATH" in
+            "~") APP_PATH="$HOME" ;;
+            "~/"*) APP_PATH="$HOME/${APP_PATH#\~/}" ;;
+          esac
+
+          echo "Deploying into $APP_PATH"
           cd "$APP_PATH"
           git fetch --prune origin main
           git reset --hard origin/main

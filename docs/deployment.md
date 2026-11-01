@@ -112,6 +112,12 @@ Everything else stays as it is in `.env.example`: `SESSION_DRIVER=database`,
 
 `.env` is untracked, so the deploy's `git reset --hard` never overwrites or deletes it.
 
+`APP_PATH` may be written as `~/catatku`: the remote scripts expand a leading `~` against the
+home of the user the runner logs in as, and print the resolved path before touching anything.
+Both remote scripts quote the variable, so without that expansion `cd "~/catatku"` would look
+for a directory literally named `~`. An absolute path is still less surprising if you ever
+change `SSH_USER`.
+
 Then authorize the deploy key. On your own machine, print the public half of the key whose
 private half went into `SSH_PRIVATE_KEY`:
 
@@ -169,7 +175,7 @@ The workflow (`.github/workflows/deploy.yml`) runs on every push to `main` and o
 | `SSH_HOST` | hostname the runner connects to | the SSH hostname published through the tunnel, e.g. `ssh.<domain>` (see §4b). **Not** an IP address when the server has no public one |
 | `SSH_USER` | user that owns the clone and can run `docker` | `whoami` on the server |
 | `SSH_PRIVATE_KEY` | whole private key, from `-----BEGIN` to `-----END` | `ssh-keygen -t ed25519 -f ~/.ssh/catatku_deploy -N ""` then `cat ~/.ssh/catatku_deploy`; the matching `.pub` goes into the server's `~/.ssh/authorized_keys` |
-| `APP_PATH` | absolute path of the clone | `pwd` inside the clone on the server, e.g. `/srv/catatku` |
+| `APP_PATH` | path of the clone on the server | `pwd` inside the clone, e.g. `/srv/catatku`. A leading `~` is accepted and expanded against the login user's home, so `~/catatku` works too |
 | `CF_ACCESS_CLIENT_ID` | Access service token id, `<32 hex>.access` | Zero Trust → Access → Service credentials → Service tokens (see §4b). Optional: only when the host is reached through the tunnel |
 | `CF_ACCESS_CLIENT_SECRET` | the matching secret, `cfast_…` or 64 hex | same screen, shown only once at creation |
 
@@ -276,7 +282,7 @@ output, because the runner log needs authentication to read while the annotation
 | `Validate the deploy key` fails with "cannot be read as a private key" | the secret lost its newlines, was truncated, or has a passphrase | paste the whole file again with real newlines and without a passphrase |
 | `Verify the SSH connection` fails with "Permission denied" | the key that arrived is not in `authorized_keys` of `SSH_USER`, or that account cannot log in | compare the fingerprints of the two (§3) |
 | `Verify the SSH connection` fails with `sh: bash: not found` (exit 127) | the server has no `bash`; the login shell is `sh` or the image is busybox based | nothing to fix on the server: the remote scripts are POSIX `sh` on purpose, so this only appears when an edit reintroduces `bash -s` or `pipefail` |
-| `Verify the SSH connection` fails with "APP_PATH does not exist" | the repository is not cloned yet | clone it to that path (§3) |
+| `Verify the SSH connection` fails with "APP_PATH does not exist" | the repository is not cloned yet, or the path is relative to a home other than the login user's | the message prints the resolved path; clone the repository there (§3) |
 | `Verify the SSH connection` fails with "docker ... not available" | the user is not in the `docker` group | `sudo usermod -aG docker <user>`, then log in again |
 | `Verify the SSH connection` fails with a handshake or a refused connection | the tunnel route points at the wrong host or port, or sshd is down | the route service must be `SSH` to `localhost:22` |
 | `Pull, rebuild and migrate` cannot reach the database | wrong root password when the volume was created, or a port clash | `docker compose -f docker-compose.production.yml logs db` |

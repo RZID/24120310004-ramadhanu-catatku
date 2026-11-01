@@ -77,6 +77,7 @@ Two pieces of code make that output possible:
 | --- | --- |
 | Docker Engine + Compose v2 | `docker-compose.production.yml` is a Compose v2 file |
 | Git | The workflow pulls `main` on the server |
+| `git` and `docker` on the `PATH` of a login shell | The remote steps run `sh -l -s`, which reads `/etc/profile` and `~/.profile`; tools installed only for interactive shells (snap, `~/.local/bin`) are invisible without that |
 | A clone at a fixed path, e.g. `/srv/catatku` | That path is the `APP_PATH` secret |
 | Cloudflare Tunnel client | Terminates TLS and forwards to the app port |
 | Port 8080 free (or `APP_PORT` set) | The app container publishes it |
@@ -282,6 +283,7 @@ output, because the runner log needs authentication to read while the annotation
 | `Validate the deploy key` fails with "cannot be read as a private key" | the secret lost its newlines, was truncated, or has a passphrase | paste the whole file again with real newlines and without a passphrase |
 | `Verify the SSH connection` fails with "Permission denied" | the key that arrived is not in `authorized_keys` of `SSH_USER`, or that account cannot log in | compare the fingerprints of the two (§3) |
 | `Verify the SSH connection` fails with `sh: bash: not found` (exit 127) | the server has no `bash`; the login shell is `sh` or the image is busybox based | nothing to fix on the server: the remote scripts are POSIX `sh` on purpose, so this only appears when an edit reintroduces `bash -s` or `pipefail` |
+| `Verify the SSH connection` fails with `git: not found` / `docker: not found`, or `... is not on PATH` | the tools live in a directory that only appears in an interactive session, typically `/snap/bin` or `~/.local/bin` | the deploy starts a login shell (`sh -l -s`) and prepends `~/.local/bin`, `~/bin` and `/snap/bin`; if it still fails, add the directory to `PATH` in `/etc/profile` or `~/.profile` |
 | `Verify the SSH connection` fails with "APP_PATH does not exist" | the repository is not cloned yet, or the path is relative to a home other than the login user's | the message prints the resolved path; clone the repository there (§3) |
 | `Verify the SSH connection` fails with "docker ... not available" | the user is not in the `docker` group | `sudo usermod -aG docker <user>`, then log in again |
 | `Verify the SSH connection` fails with a handshake or a refused connection | the tunnel route points at the wrong host or port, or sshd is down | the route service must be `SSH` to `localhost:22` |

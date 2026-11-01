@@ -166,6 +166,9 @@ jobs:
               *"Host key verification failed"*)
                 reason="The server presented a different host key than on a previous run. Confirm the key really changed before deleting it from known_hosts."
                 ;;
+              *"is not on PATH"*)
+                reason="Logged in, but a required tool is not on the PATH of a non-interactive session. Install it or add its directory (for example /snap/bin or ~/.local/bin) to PATH in /etc/profile or ~/.profile; the deploy starts a login shell on purpose."
+                ;;
               *"docker: not found"* | *"command not found"* | *"not a docker command"*)
                 reason="Logged in, but docker or docker compose is not available to SSH_USER. Add the user to the docker group and open a new session."
                 ;;
@@ -200,8 +203,15 @@ jobs:
           [ "$status" -eq 0 ] || fail "$status" "$probe"
 
           set +e
-          output=$(ssh -o BatchMode=yes -o ConnectTimeout=30 "$SSH_HOST" "APP_PATH='$APP_PATH' sh -s" <<'CHECK' 2>&1
+          output=$(ssh -o BatchMode=yes -o ConnectTimeout=30 "$SSH_HOST" "APP_PATH='$APP_PATH' sh -l -s" <<'CHECK' 2>&1
           set -eu
+
+          # ssh runs a non-interactive shell, so the PATH from /etc/profile and ~/.profile
+          # is missing and tools installed by snap or in ~/.local/bin are invisible.
+          # The script is started with `sh -l`; this adds the usual extra directories on
+          # top of whatever that login shell produced.
+          PATH="$HOME/.local/bin:$HOME/bin:/snap/bin:$PATH"
+          export PATH
 
           # A leading ~ stays literal inside a quoted variable, and the secret is easy
           # to write as ~/catatku, so expand it against the login user's home here.
@@ -211,6 +221,14 @@ jobs:
           esac
 
           echo "logged in as $(id -un) on $(hostname), APP_PATH is $APP_PATH"
+
+          for tool in git docker; do
+            if ! command -v "$tool" > /dev/null 2>&1; then
+              echo "$tool is not on PATH: $PATH" >&2
+              exit 127
+            fi
+          done
+
           cd "$APP_PATH"
           echo "clone at $(pwd) on branch $(git rev-parse --abbrev-ref HEAD)"
           docker compose version
@@ -225,8 +243,15 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           APP_PATH: ${{ secrets.APP_PATH }}
         run: |
-          ssh -o BatchMode=yes "$SSH_HOST" "APP_PATH='$APP_PATH' sh -s" <<'REMOTE'
+          ssh -o BatchMode=yes "$SSH_HOST" "APP_PATH='$APP_PATH' sh -l -s" <<'REMOTE'
           set -eu
+
+          # ssh runs a non-interactive shell, so the PATH from /etc/profile and ~/.profile
+          # is missing and tools installed by snap or in ~/.local/bin are invisible.
+          # The script is started with `sh -l`; this adds the usual extra directories on
+          # top of whatever that login shell produced.
+          PATH="$HOME/.local/bin:$HOME/bin:/snap/bin:$PATH"
+          export PATH
 
           # A leading ~ stays literal inside a quoted variable, and the secret is easy
           # to write as ~/catatku, so expand it against the login user's home here.

@@ -20,6 +20,8 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           APP_PATH: ${{ secrets.APP_PATH }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           missing=0
 
@@ -39,30 +41,86 @@ jobs:
               ;;
           esac
 
+          # The tunnel pair is optional: set both to reach the server through
+          # Cloudflare Tunnel, leave both empty for a directly reachable host.
+          if [ -n "$CF_ACCESS_CLIENT_ID" ] && [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
+            echo "::error::CF_ACCESS_CLIENT_ID is set but CF_ACCESS_CLIENT_SECRET is empty."
+            missing=1
+          fi
+
+          if [ -z "$CF_ACCESS_CLIENT_ID" ] && [ -n "$CF_ACCESS_CLIENT_SECRET" ]; then
+            echo "::error::CF_ACCESS_CLIENT_SECRET is set but CF_ACCESS_CLIENT_ID is empty."
+            missing=1
+          fi
+
           exit "$missing"
 
       - name: Set up SSH
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-          if ! ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null; then
-            echo "::error::Cannot reach $SSH_HOST on port 22 from the runner. If the server is only reachable through Cloudflare Tunnel, see docs/deployment.md section 4b."
+          if [ -n "$CF_ACCESS_CLIENT_ID" ]; then
+            mkdir -p ~/.local/bin
+            curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+              -o ~/.local/bin/cloudflared
+            chmod +x ~/.local/bin/cloudflared
+            ~/.local/bin/cloudflared --version
+
+            # SSH is not exposed on a public port: cloudflared opens the
+            # connection through the tunnel and authenticates with the Access
+            # service token. Flags are passed explicitly because the client
+            # ignores the TUNNEL_SERVICE_TOKEN_* environment variables.
+            {
+              echo "Host $SSH_HOST"
+              echo "  User $SSH_USER"
+              echo "  IdentityFile ~/.ssh/deploy_key"
+              echo "  IdentitiesOnly yes"
+              echo "  StrictHostKeyChecking accept-new"
+              echo "  ProxyCommand $HOME/.local/bin/cloudflared access ssh --hostname %h --service-token-id $CF_ACCESS_CLIENT_ID --service-token-secret $CF_ACCESS_CLIENT_SECRET"
+            } > ~/.ssh/config
+            chmod 600 ~/.ssh/config
+            echo "Using Cloudflare Tunnel for $SSH_HOST"
+          else
+            {
+              echo "Host $SSH_HOST"
+              echo "  User $SSH_USER"
+              echo "  IdentityFile ~/.ssh/deploy_key"
+              echo "  IdentitiesOnly yes"
+            } > ~/.ssh/config
+            chmod 600 ~/.ssh/config
+
+            if ! ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "::error::Cannot reach $SSH_HOST on port 22 from the runner. Set CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET to go through Cloudflare Tunnel instead (docs/deployment.md section 4b)."
+              exit 1
+            fi
+            echo "Using a direct SSH connection to $SSH_HOST"
+          fi
+
+      - name: Verify the SSH connection
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          APP_PATH: ${{ secrets.APP_PATH }}
+        run: |
+          if ! ssh -o BatchMode=yes -o ConnectTimeout=30 "$SSH_HOST" \
+            "echo \"logged in as \$(id -un) on \$(hostname)\"; cd '$APP_PATH' && git rev-parse --abbrev-ref HEAD; docker compose version"; then
+            echo "::error::SSH login or the remote checks failed. See docs/deployment.md section 4c for the usual causes."
             exit 1
           fi
 
       - name: Pull, rebuild and migrate
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_USER: ${{ secrets.SSH_USER }}
           APP_PATH: ${{ secrets.APP_PATH }}
         run: |
-          ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" \
-            "APP_PATH='$APP_PATH' bash -s" <<'REMOTE'
+          ssh -o BatchMode=yes "$SSH_HOST" "APP_PATH='$APP_PATH' bash -s" <<'REMOTE'
           set -euo pipefail
 
           cd "$APP_PATH"
